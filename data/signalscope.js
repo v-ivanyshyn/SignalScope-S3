@@ -72,6 +72,17 @@ function escapeHtml(value) {
         .replace(/'/g, "&#39;");
 }
 
+function formatPeriodMs(value) {
+    const milliseconds = Number(value);
+    if (!Number.isFinite(milliseconds) || milliseconds <= 0) {
+        return "-";
+    }
+    if (milliseconds >= 1000) {
+        return `${(milliseconds / 1000).toFixed(2)} s`;
+    }
+    return `${milliseconds} ms`;
+}
+
 function frameKey(frame, fallbackIndex = -1) {
     const id = frame.id || (frame && frame.can_id !== undefined ? `0x${Number(frame.can_id).toString(16).toUpperCase()}` : "");
     const direction = frame.direction || "";
@@ -604,9 +615,9 @@ function findSelectedFrame(frames) {
         return null;
     }
 
-    const visibleFrames = (Array.isArray(frames) ? frames : []).slice(-40);
-    for (let i = visibleFrames.length - 1; i >= 0; i -= 1) {
-        const frame = visibleFrames[i];
+    const safeFrames = Array.isArray(frames) ? frames : [];
+    for (let i = safeFrames.length - 1; i >= 0; i -= 1) {
+        const frame = safeFrames[i];
         if (frameKey(frame, i) === selectedFrameKey) {
             return frame;
         }
@@ -724,22 +735,39 @@ function loadFrameIntoEditors(frame, preserveSignalSelection = false) {
     renderRawBitEditor();
 }
 
+function compareFramesByCanIdAscending(left, right) {
+    const leftId = frameCanIdNumber(left);
+    const rightId = frameCanIdNumber(right);
+    if (leftId === null && rightId === null) {
+        return 0;
+    }
+    if (leftId === null) {
+        return 1;
+    }
+    if (rightId === null) {
+        return -1;
+    }
+    return leftId - rightId;
+}
+
 function renderFrames(frames) {
     lastRenderSourceFrames = Array.isArray(frames) ? frames.slice() : [];
     const { filtered, parsed, hasFilter, total } = applyFrameFilter(frames);
+    // Stable sort: groups events by CAN ID while preserving the device's
+    // newest-first ordering within each group.
+    filtered.sort(compareFramesByCanIdAscending);
     displayedFrames = filtered;
     dom.frameTable.innerHTML = "";
     updateFrameFilterSummary(parsed, filtered.length, total, hasFilter);
 
-    const visibleFrames = displayedFrames.slice(-40);
-    if (visibleFrames.length === 0) {
+    if (displayedFrames.length === 0) {
         dom.frameTable.innerHTML = hasFilter
             ? '<tr><td colspan="5" class="text-muted">No frames match current filter</td></tr>'
             : '<tr><td colspan="5" class="text-muted">Waiting for CAN frames...</td></tr>';
         return;
     }
 
-    visibleFrames.forEach((frame, idx) => {
+    displayedFrames.forEach((frame, idx) => {
         const row = document.createElement("tr");
         const key = frameKey(frame, idx);
         const decoded = Array.isArray(frame.decoded_signals) ? frame.decoded_signals : [];
@@ -767,7 +795,7 @@ function renderFrames(frames) {
             <td>${escapeHtml(frame.dlc ?? "-")}</td>
             <td>${escapeHtml(frame.direction || "-")}</td>
             <td><div class="fw-semibold">${escapeHtml(frame.data || "")}</div>${decodedLine}</td>
-            <td>${escapeHtml(frame.rate_hz || "-")}</td>
+            <td>${formatPeriodMs(frame.period_ms)}</td>
         `;
 
         row.style.cursor = "pointer";

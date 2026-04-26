@@ -27,9 +27,7 @@ void FrameCache::init() {
         entries_[i].mutated = false;
         entries_[i].last_timestamp_us = 0;
         entries_[i].total_frames = 0;
-        entries_[i].rate_sample_start_ms = 0;
-        entries_[i].rate_sample_frames = 0;
-        entries_[i].rate_hz = 0;
+        entries_[i].period_ms = 0;
     }
 
     for (size_t i = 0; i < kRecentCapacity; ++i) {
@@ -39,13 +37,18 @@ void FrameCache::init() {
     recent_count_.store(0, std::memory_order_relaxed);
 }
 
-void FrameCache::update(const CanFrame& frame, uint32_t now_ms, bool mutated) {
+void FrameCache::update(const CanFrame& frame, uint32_t /*now_ms*/, bool mutated) {
     Entry* entry = findOrCreate(frame.id, frame.direction);
     if (entry == nullptr) {
         return;
     }
 
     entry->sequence.fetch_add(1U, std::memory_order_relaxed);
+
+    // Capture the previous frame's timestamp (and whether one existed) before
+    // we overwrite last_timestamp_us, so we can compute the inter-frame delta.
+    const bool has_previous_frame = (entry->total_frames > 0U);
+    const uint32_t previous_timestamp_us = entry->last_timestamp_us;
 
     entry->can_id = frame.id;
     entry->direction = frame.direction;
@@ -55,20 +58,14 @@ void FrameCache::update(const CanFrame& frame, uint32_t now_ms, bool mutated) {
     entry->last_timestamp_us = frame.timestamp_us;
 
     ++entry->total_frames;
-    ++entry->rate_sample_frames;
 
-    if (entry->rate_sample_start_ms == 0U) {
-        entry->rate_sample_start_ms = now_ms;
-    }
-
-    const uint32_t elapsed_ms = now_ms - entry->rate_sample_start_ms;
-    if (elapsed_ms >= 1000U) {
-        const uint32_t hz = (elapsed_ms == 0U)
-            ? 0U
-            : ((entry->rate_sample_frames * 1000U) / elapsed_ms);
-        entry->rate_hz = static_cast<uint16_t>((hz > 0xFFFFU) ? 0xFFFFU : hz);
-        entry->rate_sample_frames = 0;
-        entry->rate_sample_start_ms = now_ms;
+    if (has_previous_frame) {
+        // Unsigned subtraction handles micros() wrap-around correctly for any
+        // delta below ~71 minutes, which is well above realistic CAN periods.
+        const uint32_t delta_us = frame.timestamp_us - previous_timestamp_us;
+        entry->period_ms = delta_us / 1000U;
+    } else {
+        entry->period_ms = 0;
     }
 
     const FrameCacheSnapshot event{
@@ -81,7 +78,7 @@ void FrameCache::update(const CanFrame& frame, uint32_t now_ms, bool mutated) {
         },
         entry->mutated,
         entry->last_timestamp_us,
-        entry->rate_hz,
+        entry->period_ms,
         entry->total_frames
     };
 
@@ -126,7 +123,7 @@ size_t FrameCache::snapshot(FrameCacheSnapshot* out_entries, size_t capacity) co
             std::memcpy(snap.data, entry->data, sizeof(snap.data));
             snap.mutated = entry->mutated;
             snap.last_timestamp_us = entry->last_timestamp_us;
-            snap.rate_hz = entry->rate_hz;
+            snap.period_ms = entry->period_ms;
             snap.total_frames = entry->total_frames;
 
             const uint32_t seq_b = entry->sequence.load(std::memory_order_acquire);
@@ -184,9 +181,7 @@ FrameCache::Entry* FrameCache::findOrCreate(uint32_t can_id, Direction direction
             entry.mutated = false;
             entry.last_timestamp_us = 0;
             entry.total_frames = 0;
-            entry.rate_sample_start_ms = 0;
-            entry.rate_sample_frames = 0;
-            entry.rate_hz = 0;
+            entry.period_ms = 0;
             entry.sequence.store(0, std::memory_order_relaxed);
             entry.in_use.store(1U, std::memory_order_release);
 

@@ -1247,7 +1247,7 @@ void handleStatus() {
         json += "\"direction\":\"" + String(directionToString(frames[i].direction)) + "\",";
         json += "\"timestamp_us\":" + String(frames[i].last_timestamp_us) + ",";
         json += "\"data\":\"" + frameDataHex(frames[i]) + "\",";
-        json += "\"rate_hz\":" + String(frames[i].rate_hz) + ",";
+        json += "\"period_ms\":" + String(frames[i].period_ms) + ",";
         json += "\"total_frames\":" + String(frames[i].total_frames) + ",";
         json += "\"mutated\":" + String(frames[i].mutated ? "true" : "false") + ",";
         appendDecodedSignalsJson(json, frames[i]);
@@ -1274,7 +1274,7 @@ void handleFrameCache() {
         json += "\"direction\":\"" + String(directionToString(frames[i].direction)) + "\",";
         json += "\"dlc\":" + String(frames[i].dlc) + ",";
         json += "\"timestamp_us\":" + String(frames[i].last_timestamp_us) + ",";
-        json += "\"rate_hz\":" + String(frames[i].rate_hz) + ",";
+        json += "\"period_ms\":" + String(frames[i].period_ms) + ",";
         json += "\"mutated\":" + String(frames[i].mutated ? "true" : "false") + ",";
         json += "\"data\":\"" + frameDataHex(frames[i]) + "\"";
         json += "}";

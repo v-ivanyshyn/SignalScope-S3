@@ -38,7 +38,7 @@ Two views are maintained:
 
 Each cached frame carries:
 - `can_id`, `direction`, `dlc`, `data`, `timestamp_us`
-- sampled `rate_hz`, `total_frames`
+- inter-frame `period_ms`, `total_frames`
 - `mutated` flag (actual applied-state for that frame)
 
 `/api/status` recent frame payload uses the **recent event ring**.

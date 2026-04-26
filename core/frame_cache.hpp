@@ -15,7 +15,7 @@ struct FrameCacheSnapshot {
     uint8_t data[8] = {0};
     bool mutated = false;
     uint32_t last_timestamp_us = 0;
-    uint16_t rate_hz = 0;
+    uint32_t period_ms = 0;
     uint32_t total_frames = 0;
 };
 
@@ -46,9 +46,7 @@ private:
         uint32_t last_timestamp_us = 0;
         uint32_t total_frames = 0;
 
-        uint32_t rate_sample_start_ms = 0;
-        uint32_t rate_sample_frames = 0;
-        uint16_t rate_hz = 0;
+        uint32_t period_ms = 0;
     };
 
     static uint32_t hashKey(uint32_t can_id, Direction direction);
