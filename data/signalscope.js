@@ -83,14 +83,34 @@ function formatPeriodMs(value) {
     return `${milliseconds} ms`;
 }
 
+function renderFrameDataBytes(dataString, changedMask) {
+    if (!dataString) {
+        return "";
+    }
+    const tokens = String(dataString).trim().split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) {
+        return "";
+    }
+    const maskNumber = Number(changedMask);
+    const mask = Number.isFinite(maskNumber) ? (maskNumber & 0xFF) : 0;
+    return tokens
+        .map((token, byteIndex) => {
+            const isChanged = (mask & (1 << byteIndex)) !== 0;
+            const className = isChanged ? "frame-byte frame-byte-changed" : "frame-byte";
+            return `<span class="${className}">${escapeHtml(token)}</span>`;
+        })
+        .join(" ");
+}
+
 function frameKey(frame, fallbackIndex = -1) {
+    // Each row corresponds to a single (can_id, direction) entry in the device
+    // dictionary, so the key is stable across status polls even as the frame
+    // bytes update. This keeps row selection sticky between renders.
     const id = frame.id || (frame && frame.can_id !== undefined ? `0x${Number(frame.can_id).toString(16).toUpperCase()}` : "");
     const direction = frame.direction || "";
-    const ts = Number.isFinite(Number(frame && frame.timestamp_us)) ? String(frame.timestamp_us) : "";
-    const seq = Number.isFinite(Number(frame && frame.total_frames)) ? String(frame.total_frames) : "";
 
-    if (id || direction || ts || seq) {
-        return `${id}|${direction}|${ts}|${seq}`;
+    if (id || direction) {
+        return `${id}|${direction}`;
     }
     if (fallbackIndex >= 0) {
         return `row|${fallbackIndex}`;
@@ -794,7 +814,7 @@ function renderFrames(frames) {
             <td>${escapeHtml(frame.id || "-")}</td>
             <td>${escapeHtml(frame.dlc ?? "-")}</td>
             <td>${escapeHtml(frame.direction || "-")}</td>
-            <td><div class="fw-semibold">${escapeHtml(frame.data || "")}</div>${decodedLine}</td>
+            <td><div class="fw-semibold frame-data">${renderFrameDataBytes(frame.data, frame.byte_changed_mask)}</div>${decodedLine}</td>
             <td>${formatPeriodMs(frame.period_ms)}</td>
         `;
 

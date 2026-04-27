@@ -29,6 +29,23 @@
     background-color: rgba(245, 158, 11, 0.08);
 }
 
+#frame-table .frame-data {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    letter-spacing: 0.02em;
+}
+
+#frame-table .frame-byte {
+    display: inline-block;
+    padding: 0 0.2rem;
+    border-radius: 0.2rem;
+    transition: background-color 120ms ease-out;
+}
+
+#frame-table .frame-byte-changed {
+    background: rgba(59, 192, 195, 0.22);
+    color: #99f6e4;
+}
+
 #active-mutation-list .list-group-item {
     background: transparent;
 }

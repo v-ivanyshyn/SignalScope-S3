@@ -32,16 +32,18 @@ Live ingress and replay injection share this same mutation/decode/forward pipeli
 
 ## Caches
 ### FrameCache
-Two views are maintained:
-- Identity snapshot (`snapshot`): last frame keyed by `(can_id, direction)`.
-- Recent event ring (`snapshotRecent`): rolling recent frame events (no ID collapse), newest first.
+A single dictionary view is maintained, keyed by `(can_id, direction)` and
+holding only the most recent frame seen for each key (capacity
+`kMaxEntries = 256`). `snapshot()` returns this dictionary sorted newest-first
+by `last_timestamp_us`.
 
 Each cached frame carries:
 - `can_id`, `direction`, `dlc`, `data`, `timestamp_us`
-- inter-frame `period_ms`, `total_frames`
+- inter-frame `period_ms`, per-byte `byte_changed_mask`
 - `mutated` flag (actual applied-state for that frame)
 
-`/api/status` recent frame payload uses the **recent event ring**.
+`/api/status` exposes this snapshot under the `recent_frames` JSON key (the
+key name is preserved for backward compatibility with the existing UI).
 
 ### SignalCache
 - DBC-indexed signal storage (`index -> value`).

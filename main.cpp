@@ -29,7 +29,7 @@ namespace {
 
 constexpr const char* kApSsid = "SignalScope-AP";
 constexpr const char* kApPassword = "signalscope";
-constexpr size_t kStatusFrameLimit = 40;
+constexpr size_t kStatusFrameLimit = 256;
 constexpr size_t kSignalSnapshotLimit = 384;
 constexpr size_t kMaxPollFramesPerBus = 128;
 constexpr size_t kMaxDecodedSignalsPerFrame = 24;
@@ -1193,7 +1193,7 @@ void handleStatus() {
     const DbcDatabase* dbc = active_dbc.load(std::memory_order_acquire);
 
     FrameCacheSnapshot frames[kStatusFrameLimit];
-    const size_t frame_count = frame_cache.snapshotRecent(frames, kStatusFrameLimit);
+    const size_t frame_count = frame_cache.snapshot(frames, kStatusFrameLimit);
 
     const uint16_t fps = frame_rate_fps.load(std::memory_order_acquire);
     const uint16_t bus_a = (fps > 1000U) ? 100U : static_cast<uint16_t>(fps / 10U);
@@ -1201,7 +1201,10 @@ void handleStatus() {
     const uint16_t bus_total = (bus_a + bus_b > 100U) ? 100U : static_cast<uint16_t>(bus_a + bus_b);
 
     String json;
-    json.reserve(36000);
+    // Sized for up to ~256 distinct CAN IDs in the snapshot, each with a
+    // moderate number of decoded signals. Falls back to dynamic growth if
+    // the bus actually surfaces more.
+    json.reserve(60000);
     json += "{";
     json += "\"cpu_load_pct\":5,";
     json += "\"bus_a_util_pct\":" + String(bus_a) + ",";
@@ -1248,7 +1251,7 @@ void handleStatus() {
         json += "\"timestamp_us\":" + String(frames[i].last_timestamp_us) + ",";
         json += "\"data\":\"" + frameDataHex(frames[i]) + "\",";
         json += "\"period_ms\":" + String(frames[i].period_ms) + ",";
-        json += "\"total_frames\":" + String(frames[i].total_frames) + ",";
+        json += "\"byte_changed_mask\":" + String(static_cast<uint32_t>(frames[i].byte_changed_mask)) + ",";
         json += "\"mutated\":" + String(frames[i].mutated ? "true" : "false") + ",";
         appendDecodedSignalsJson(json, frames[i]);
         json += "}";
@@ -1275,6 +1278,7 @@ void handleFrameCache() {
         json += "\"dlc\":" + String(frames[i].dlc) + ",";
         json += "\"timestamp_us\":" + String(frames[i].last_timestamp_us) + ",";
         json += "\"period_ms\":" + String(frames[i].period_ms) + ",";
+        json += "\"byte_changed_mask\":" + String(static_cast<uint32_t>(frames[i].byte_changed_mask)) + ",";
         json += "\"mutated\":" + String(frames[i].mutated ? "true" : "false") + ",";
         json += "\"data\":\"" + frameDataHex(frames[i]) + "\"";
         json += "}";

@@ -15,23 +15,24 @@ struct FrameCacheSnapshot {
     uint8_t data[8] = {0};
     bool mutated = false;
     uint32_t last_timestamp_us = 0;
+    // Time between the most recent frame for this (id, direction) and the one
+    // immediately preceding it. 0 when only a single frame has been seen.
     uint32_t period_ms = 0;
-    uint32_t total_frames = 0;
+    // Bitmask: bit i is set when data[i] differs from the previous frame for
+    // this (id, direction). Always 0 for the first frame seen. Bits at or
+    // beyond the current dlc are always 0.
+    uint8_t byte_changed_mask = 0;
 };
 
 class FrameCache {
 public:
-    static constexpr size_t kMaxEntries = 128;
-    static constexpr size_t kRecentCapacity = 256;
+    static constexpr size_t kMaxEntries = 256;
 
     void init();
     void update(const CanFrame& frame, uint32_t now_ms, bool mutated);
 
-    // Snapshot keyed by (can_id, direction) identity.
+    // Snapshot keyed by (can_id, direction) identity, sorted newest first.
     size_t snapshot(FrameCacheSnapshot* out_entries, size_t capacity) const;
-
-    // Snapshot recent frame events (no identity collapsing), newest first.
-    size_t snapshotRecent(FrameCacheSnapshot* out_entries, size_t capacity) const;
 
 private:
     struct Entry {
@@ -44,9 +45,9 @@ private:
         uint8_t data[8] = {0};
         bool mutated = false;
         uint32_t last_timestamp_us = 0;
-        uint32_t total_frames = 0;
 
         uint32_t period_ms = 0;
+        uint8_t byte_changed_mask = 0;
     };
 
     static uint32_t hashKey(uint32_t can_id, Direction direction);
@@ -55,10 +56,6 @@ private:
 
     Entry entries_[kMaxEntries];
     std::atomic<uint16_t> count_{0};
-
-    FrameCacheSnapshot recent_[kRecentCapacity];
-    std::atomic<uint16_t> recent_head_{0};
-    std::atomic<uint16_t> recent_count_{0};
 };
 
 }  // namespace bored::signalscope
