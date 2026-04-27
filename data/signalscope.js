@@ -645,7 +645,7 @@ function findSelectedFrame(frames) {
     return null;
 }
 
-function setSignalPickerDisabled(message) {
+function setSignalPickerDisabled(message, options) {
     if (!dom.signalPicker) {
         return;
     }
@@ -654,7 +654,12 @@ function setSignalPickerDisabled(message) {
     dom.signalPicker.disabled = true;
     selectedSignalIndex = 0;
     enforceRawOnlyOperationMode();
-    renderRawBitEditor();
+    // Status polls pass { preserveEditor: true } so periodic refreshes do not
+    // overwrite values the user is currently editing in the Raw Frame / Bit
+    // Editor or in the Mutation Editor's REPLACE value field.
+    if (!options || !options.preserveEditor) {
+        renderRawBitEditor();
+    }
 }
 
 function applySignalToMutationForm(signal) {
@@ -686,14 +691,14 @@ function applySignalToMutationForm(signal) {
     }
 }
 
-function refreshSignalPicker(frame, preserveSelection) {
+function refreshSignalPicker(frame, preserveSelection, options) {
     if (!dom.signalPicker) {
         return;
     }
 
     const decoded = frame && Array.isArray(frame.decoded_signals) ? frame.decoded_signals : [];
     if (decoded.length === 0) {
-        setSignalPickerDisabled("No decoded signals for selected frame");
+        setSignalPickerDisabled("No decoded signals for selected frame", options);
         return;
     }
 
@@ -720,7 +725,12 @@ function refreshSignalPicker(frame, preserveSelection) {
 
     dom.signalPicker.value = String(selectedSignalIndex);
     enforceRawOnlyOperationMode();
-    renderRawBitEditor();
+    // Status polls pass { preserveEditor: true } so periodic refreshes do not
+    // overwrite values the user is currently editing in the Raw Frame / Bit
+    // Editor or in the Mutation Editor's REPLACE value field.
+    if (!options || !options.preserveEditor) {
+        renderRawBitEditor();
+    }
 }
 
 function loadFrameIntoEditors(frame, preserveSignalSelection = false) {
@@ -1088,15 +1098,18 @@ async function refreshStatus() {
         if (!framesPaused) {
             renderFrames(latestIncomingFrames);
 
+            // Once a frame has been loaded into the editors, the Mutation
+            // Editor and Raw Frame + Bit Editor are user-owned: they reflect
+            // the snapshot taken at click time plus whatever the user types.
+            // Periodic status polls only refresh the picker option labels
+            // (so live signal values stay visible in the dropdown) and must
+            // not re-render the editor, which would clobber pending edits in
+            // the byte inputs and the REPLACE value field.
             const selectedFrame = findSelectedFrame(displayedFrames);
-            const editingRaw = !!(dom.rawByteInputs && dom.rawByteInputs.some((input) => document.activeElement === input));
-            if (selectedFrame && !editingRaw) {
-                refreshSignalPicker(selectedFrame, true);
-                renderRawBitEditor();
-            } else if (selectedFrame) {
-                refreshSignalPicker(selectedFrame, true);
+            if (selectedFrame) {
+                refreshSignalPicker(selectedFrame, true, { preserveEditor: true });
             } else if (dom.signalPicker) {
-                setSignalPickerDisabled("Select a frame with decoded DBC signals");
+                setSignalPickerDisabled("Select a frame with decoded DBC signals", { preserveEditor: true });
             }
         }
     } catch (_error) {
