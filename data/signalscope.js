@@ -27,6 +27,7 @@ const dom = {
 
     dbcFile: document.getElementById("dbc-file"),
     dbcUpload: document.getElementById("dbc-upload"),
+    dbcUnload: document.getElementById("dbc-unload"),
 
     activeMutationList: document.getElementById("active-mutation-list"),
 
@@ -859,6 +860,9 @@ function setOffline() {
     if (dom.fastPathAvg) dom.fastPathAvg.textContent = "offline";
     if (dom.activePathAvg) dom.activePathAvg.textContent = "offline";
     dom.dbcStatus.textContent = "No backend connection";
+    if (dom.dbcUnload) {
+        dom.dbcUnload.hidden = true;
+    }
 }
 
 function updatePauseUi() {
@@ -1091,6 +1095,9 @@ async function refreshStatus() {
         dom.dbcStatus.textContent = status.dbc_loaded
             ? `DBC loaded (${status.dbc_message_count} msgs / ${status.dbc_signal_count} signals)`
             : "No DBC loaded";
+        if (dom.dbcUnload) {
+            dom.dbcUnload.hidden = !status.dbc_loaded;
+        }
 
         renderActiveMutations(status.active_mutation_items || []);
 
@@ -1192,6 +1199,48 @@ dom.dbcUpload.addEventListener("click", async () => {
         refreshStatus();
     }
 });
+
+if (dom.dbcUnload) {
+    dom.dbcUnload.addEventListener("click", async () => {
+        if (dom.dbcUnload.disabled) {
+            return;
+        }
+
+        dom.dbcUnload.disabled = true;
+        const previousStatus = dom.dbcStatus.textContent;
+        dom.dbcStatus.textContent = "Unloading DBC...";
+        dom.replayStatus.textContent = "DBC unload requested";
+
+        try {
+            const response = await fetch("/api/dbc", { method: "DELETE" });
+            let body = null;
+            try {
+                body = await response.json();
+            } catch (_error) {
+                body = null;
+            }
+
+            if (response.ok && body && body.ok) {
+                dom.dbcStatus.textContent = "No DBC loaded";
+                dom.replayStatus.textContent = "DBC unloaded";
+                dom.dbcUnload.hidden = true;
+            } else {
+                const reason = (body && (body.error || body.message))
+                    ? (body.error || body.message)
+                    : `HTTP ${response.status}`;
+                dom.dbcStatus.textContent = previousStatus;
+                dom.replayStatus.textContent = `DBC unload failed: ${reason}`;
+            }
+        } catch (error) {
+            dom.dbcStatus.textContent = previousStatus;
+            dom.replayStatus.textContent = `DBC unload failed: ${error && error.message ? error.message : "network error"}`;
+        } finally {
+            dom.dbcUnload.disabled = false;
+        }
+
+        refreshStatus();
+    });
+}
 
 dom.applyBtn.addEventListener("click", async () => {
     const stage = await postForm("/api/mutations/stage", mutationFormParams());

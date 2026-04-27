@@ -363,7 +363,10 @@
         <div class="card h-100">
             <div class="card-body">
                 <h4 class="header-title mb-2">DBC Runtime</h4>
-                <div class="alert alert-info py-2 mb-3" id="dbc-status">No DBC loaded</div>
+                <div class="d-flex align-items-stretch gap-2 mb-3">
+                    <div class="alert alert-info py-2 mb-0 flex-grow-1" id="dbc-status">No DBC loaded</div>
+                    <button type="button" class="btn btn-outline-danger" id="dbc-unload" hidden>Unload DBC</button>
+                </div>
                 <div class="row g-2">
                     <div class="col-md-8">
                         <input type="file" class="form-control" id="dbc-file" accept=".dbc,.txt" />

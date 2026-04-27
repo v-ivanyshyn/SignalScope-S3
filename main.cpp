@@ -392,6 +392,7 @@ void handleRuleEnable();
 void handleReplayLoad();
 void handleReplayControl();
 void handleDbcUpload();
+void handleDbcUnload();
 void handleNotFound();
 void configureHttpServer();
 void startAccessPoint();
@@ -610,6 +611,7 @@ void configureHttpServer() {
     server.on("/api/replay", HTTP_POST, handleReplayControl);
     server.on("/api/replay/load", HTTP_POST, handleReplayLoad);
     server.on("/api/dbc", HTTP_POST, handleDbcUpload);
+    server.on("/api/dbc", HTTP_DELETE, handleDbcUnload);
 
     server.onNotFound(handleNotFound);
     server.begin();
@@ -1014,6 +1016,35 @@ void handleDbcUpload() {
     const String json = "{\"ok\":true,\"messages\":" + String(static_cast<uint32_t>(dbc_database.messageCount())) +
         ",\"signals\":" + String(static_cast<uint32_t>(dbc_database.signalCount())) + "}";
     server.send(200, "application/json", json);
+}
+
+void handleDbcUnload() {
+    // Detach the runtime first so consumers (gateway decode path, status
+    // endpoint, signal cache writers) stop dereferencing the database before
+    // we wipe its contents.
+    active_dbc.store(nullptr, std::memory_order_release);
+    dbc_database.clear();
+
+    // After clear() the database reports 0 signals, so resetForDbc collapses
+    // the signal cache name map and counts back to the empty state.
+    signal_cache.resetForDbc(dbc_database);
+    signal_cache.clearSubscriptions();
+    observation_manager.clearSpecific();
+    observation_manager.setMode(ObservationMode::NONE);
+    replay_engine.stop();
+    mutation_engine.clearRules();
+
+    // Forget the persisted copy so the device boots without a DBC next time.
+    bool removed = false;
+    if (fs_mounted.load(std::memory_order_acquire) != 0U) {
+        if (LittleFS.exists(kActiveDbcPath)) {
+            removed = LittleFS.remove(kActiveDbcPath);
+        }
+    }
+
+    Serial.printf("[dbc] unloaded (persisted_removed=%d)\n", removed ? 1 : 0);
+
+    server.send(200, "application/json", "{\"ok\":true}");
 }
 
 void handleNotFound() {
