@@ -11,10 +11,8 @@ const dom = {
     busB: document.getElementById("bus-b"),
     rxDepth: document.getElementById("rx-depth"),
     dropped: document.getElementById("dropped"),
-    busAHwDrops: document.getElementById("bus-a-hw-drops"),
-    busBHwDrops: document.getElementById("bus-b-hw-drops"),
-    fastPathAvg: document.getElementById("fast-path-avg"),
-    activePathAvg: document.getElementById("active-path-avg"),
+    directPathAvg: document.getElementById("direct-path-avg"),
+    mutatedPathAvg: document.getElementById("mutated-path-avg"),
     replayStatus: document.getElementById("replay-status"),
 
     applyBtn: document.getElementById("apply-btn"),
@@ -859,10 +857,8 @@ function setOffline() {
     dom.busB.textContent = "offline";
     dom.rxDepth.textContent = "offline";
     dom.dropped.textContent = "offline";
-    if (dom.busAHwDrops) dom.busAHwDrops.textContent = "offline";
-    if (dom.busBHwDrops) dom.busBHwDrops.textContent = "offline";
-    if (dom.fastPathAvg) dom.fastPathAvg.textContent = "offline";
-    if (dom.activePathAvg) dom.activePathAvg.textContent = "offline";
+    if (dom.directPathAvg) dom.directPathAvg.textContent = "offline";
+    if (dom.mutatedPathAvg) dom.mutatedPathAvg.textContent = "offline";
     dom.dbcStatus.textContent = "No backend connection";
     if (dom.dbcUnload) {
         dom.dbcUnload.hidden = true;
@@ -1082,29 +1078,25 @@ async function refreshStatus() {
         const status = await response.json();
         dom.cpuLoad.textContent = `${status.cpu_load_pct}%`;
         dom.busA.textContent = status.bus_a_ready
-            ? `RX ${status.bus_a_rx_util_pct}% / TX ${status.bus_a_tx_util_pct}%`
+            ? `RX ${status.bus_a_rx_util_pct}% / TX ${status.bus_a_tx_util_pct}% · drops: ${status.bus_a_hw_drops}`
             : "not ready";
         dom.busB.textContent = status.bus_b_ready
-            ? `RX ${status.bus_b_rx_util_pct}% / TX ${status.bus_b_tx_util_pct}%`
+            ? `RX ${status.bus_b_rx_util_pct}% / TX ${status.bus_b_tx_util_pct}% · drops: ${status.bus_b_hw_drops}`
             : "not ready";
         dom.rxDepth.textContent = `${status.rx_queue_depth}`;
         dom.dropped.textContent = `${status.dropped_frames}`;
-        if (dom.busAHwDrops) {
-            dom.busAHwDrops.textContent = status.bus_a_ready ? `${status.bus_a_hw_drops}` : "not ready";
-        }
-        if (dom.busBHwDrops) {
-            dom.busBHwDrops.textContent = status.bus_b_ready ? `${status.bus_b_hw_drops}` : "not ready";
-        }
         dom.mutationCount.textContent = `${status.active_mutations} active / ${status.staging_mutations} staging`;
-        if (dom.fastPathAvg) {
-            const n = Number(status.fast_path_samples || 0);
-            const v = Number(status.fast_path_avg_us || 0);
-            dom.fastPathAvg.textContent = n > 0 ? `${v} us (n=${n})` : "-";
+        if (dom.directPathAvg) {
+            const framesPerSec = Number(status.direct_path_frames_per_sec || 0);
+            const v = Number(status.direct_path_avg_us || 0);
+            const showLatency = framesPerSec > 0 || v > 0;
+            dom.directPathAvg.textContent = showLatency ? `${v} us · ${framesPerSec} frames/s` : "-";
         }
-        if (dom.activePathAvg) {
-            const n = Number(status.active_path_samples || 0);
-            const v = Number(status.active_path_avg_us || 0);
-            dom.activePathAvg.textContent = n > 0 ? `${v} us (n=${n})` : "-";
+        if (dom.mutatedPathAvg) {
+            const framesPerSec = Number(status.mutated_path_frames_per_sec || 0);
+            const v = Number(status.mutated_path_avg_us || 0);
+            const showLatency = framesPerSec > 0 || v > 0;
+            dom.mutatedPathAvg.textContent = showLatency ? `${v} us · ${framesPerSec} frames/s` : "-";
         }
         dom.dbcStatus.textContent = status.dbc_loaded
             ? `DBC loaded (${status.dbc_message_count} msgs / ${status.dbc_signal_count} signals)`

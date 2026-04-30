@@ -14,7 +14,7 @@
 
 ## Single Gateway Pipeline
 1. Ingress frame is queued (`GatewayCore::onFrameReceivedFromIsr`).
-2. `GatewayCore::pollRx` drains queue and processes each frame.
+2. `GatewayCore::pollRx` drains queue and processes each frame. Queued frames keep `timestamp_us` from the bus read (`micros()` at RX), used for bridge latency stats and the frame cache.
 3. Fast-path precheck:
    - no active rules for `(can_id, direction)`, and
    - frame not observed by `ObservationManager`.
@@ -132,4 +132,4 @@ Legacy compatibility routes:
 - forwarded/passive/observed decode counters
 - active/staging mutation counts
 - ingress counters (`ingress_a_frames`, `ingress_b_frames`)
-- path latency averages (`fast_path_avg_us`, `active_path_avg_us`)
+- per-path latency for the last completed 1 s window: mean µs (`direct_path_avg_us`, `mutated_path_avg_us`) and frame counts (`direct_path_frames_per_sec`, `mutated_path_frames_per_sec`), from `GatewayCore::rollPerSecondWindow` (same cadence as `BusStats::rollWindow`); global forwarded rate in that window is `forwarded_frames_per_sec` / JSON `frame_rate_fps`

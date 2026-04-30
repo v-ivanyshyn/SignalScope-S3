@@ -11,18 +11,14 @@ namespace bored::signalscope {
 
 namespace {
 
-inline void updateRunningAverageLatency(uint32_t latency_us, uint32_t& avg_us, uint32_t& samples) {
-    if (samples < 0xFFFFFFFFU) {
-        ++samples;
+// Live ingress: latency is RX read (frame.timestamp_us) to after TX. Replay uses
+// forwardFrame-only time so file timestamps are ignored.
+inline uint32_t measuredLatencyUs(bool from_replay, uint32_t end_us, const CanFrame& frame,
+                                uint32_t processing_start_us) {
+    if (from_replay) {
+        return end_us - processing_start_us;
     }
-
-    if (samples <= 1U) {
-        avg_us = latency_us;
-        return;
-    }
-
-    const int32_t delta = static_cast<int32_t>(latency_us) - static_cast<int32_t>(avg_us);
-    avg_us = static_cast<uint32_t>(static_cast<int32_t>(avg_us) + (delta / static_cast<int32_t>(samples)));
+    return end_us - frame.timestamp_us;
 }
 
 }  // namespace
@@ -32,6 +28,11 @@ void GatewayCore::init() {
     queue_tail_ = 0;
     ready_gate_ = false;
     stats_ = {};
+    direct_latency_window_sum_us_ = 0;
+    direct_latency_window_count_ = 0;
+    mutated_latency_window_sum_us_ = 0;
+    mutated_latency_window_count_ = 0;
+    last_forwarded_frames_at_roll_ = 0;
 }
 
 void GatewayCore::setMutationEngine(MutationEngine* engine) {
@@ -94,10 +95,9 @@ bool GatewayCore::injectReplayFrame(const CanFrame& frame) {
     return true;
 }
 
-void GatewayCore::pollRx(uint32_t now_us, uint32_t now_ms) {
+void GatewayCore::pollRx(uint32_t now_ms) {
     while (queue_tail_ != queue_head_) {
         CanFrame frame = rx_queue_[queue_tail_];
-        frame.timestamp_us = now_us;
         queue_tail_ = nextIndex(queue_tail_);
         forwardFrame(frame, false, now_ms);
     }
@@ -110,6 +110,40 @@ void GatewayCore::pollRx(uint32_t now_us, uint32_t now_ms) {
 
 const GatewayStats& GatewayCore::stats() const {
     return stats_;
+}
+
+void GatewayCore::rollPerSecondWindow(uint32_t now_ms) {
+    (void)now_ms;
+
+    const uint32_t direct_count = direct_latency_window_count_;
+    const uint64_t direct_sum = direct_latency_window_sum_us_;
+    direct_latency_window_count_ = 0;
+    direct_latency_window_sum_us_ = 0;
+    if (direct_count > 0U) {
+        stats_.direct_path_latency_avg_us = static_cast<uint32_t>(direct_sum / direct_count);
+        stats_.direct_path_frames_per_sec = static_cast<uint16_t>(direct_count > 65535U ? 65535U : direct_count);
+    } else {
+        stats_.direct_path_latency_avg_us = 0U;
+        stats_.direct_path_frames_per_sec = 0U;
+    }
+
+    const uint32_t mutated_count = mutated_latency_window_count_;
+    const uint64_t mutated_sum = mutated_latency_window_sum_us_;
+    mutated_latency_window_count_ = 0;
+    mutated_latency_window_sum_us_ = 0;
+    if (mutated_count > 0U) {
+        stats_.mutated_path_latency_avg_us = static_cast<uint32_t>(mutated_sum / mutated_count);
+        stats_.mutated_path_frames_per_sec = static_cast<uint16_t>(mutated_count > 65535U ? 65535U : mutated_count);
+    } else {
+        stats_.mutated_path_latency_avg_us = 0U;
+        stats_.mutated_path_frames_per_sec = 0U;
+    }
+
+    const uint32_t forwarded_total = stats_.forwarded_frames;
+    const uint32_t forwarded_delta = forwarded_total - last_forwarded_frames_at_roll_;
+    last_forwarded_frames_at_roll_ = forwarded_total;
+    stats_.forwarded_frames_per_sec =
+        static_cast<uint16_t>(forwarded_delta > 65535U ? 65535U : forwarded_delta);
 }
 
 void GatewayCore::forwardFrame(CanFrame& frame, bool from_replay, uint32_t now_ms) {
@@ -130,12 +164,14 @@ void GatewayCore::forwardFrame(CanFrame& frame, bool from_replay, uint32_t now_m
         }
 
         if (tx_attempted) {
-            const uint32_t latency_us = micros() - processing_start_us;
-            updateRunningAverageLatency(latency_us, stats_.fast_path_latency_avg_us, stats_.fast_path_latency_samples);
+            const uint32_t latency_us =
+                measuredLatencyUs(from_replay, micros(), frame, processing_start_us);
+            direct_latency_window_sum_us_ += static_cast<uint64_t>(latency_us);
+            ++direct_latency_window_count_;
         }
 
         ++stats_.forwarded_frames;
-        ++stats_.passive_fast_path_frames;
+        ++stats_.passive_direct_path_frames;
         if (from_replay) {
             ++stats_.replay_injected_frames;
         }
@@ -166,8 +202,10 @@ void GatewayCore::forwardFrame(CanFrame& frame, bool from_replay, uint32_t now_m
     }
 
     if (tx_attempted) {
-        const uint32_t latency_us = micros() - processing_start_us;
-        updateRunningAverageLatency(latency_us, stats_.active_path_latency_avg_us, stats_.active_path_latency_samples);
+        const uint32_t latency_us =
+            measuredLatencyUs(from_replay, micros(), frame, processing_start_us);
+        mutated_latency_window_sum_us_ += static_cast<uint64_t>(latency_us);
+        ++mutated_latency_window_count_;
     }
 
     ++stats_.forwarded_frames;

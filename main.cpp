@@ -71,7 +71,6 @@ TaskHandle_t ui_task_handle = nullptr;
 std::atomic<uint8_t> bus_a_ready{0};
 std::atomic<uint8_t> bus_b_ready{0};
 std::atomic<uint8_t> fs_mounted{0};
-std::atomic<uint16_t> frame_rate_fps{0};
 std::atomic<uint32_t> ingress_a_frames{0};
 std::atomic<uint32_t> ingress_b_frames{0};
 String ui_index_path = "/index.html";
@@ -638,7 +637,6 @@ void startAccessPoint() {
 
 void canRuntimeTask(void* /*context*/) {
     uint32_t last_rate_sample_ms = millis();
-    uint32_t last_forwarded = 0U;
     uint32_t last_stats_log_ms = millis();
 
     gateway.setReadyGate(true);
@@ -648,13 +646,11 @@ void canRuntimeTask(void* /*context*/) {
         const uint32_t now_ms = millis();
 
         pollCanIngress();
-        gateway.pollRx(now_us, now_ms);
+        gateway.pollRx(now_ms);
         replay_engine.tick(now_us);
 
         if (now_ms - last_rate_sample_ms >= 1000U) {
-            const uint32_t forwarded = gateway.stats().forwarded_frames;
-            frame_rate_fps.store(static_cast<uint16_t>(forwarded - last_forwarded), std::memory_order_release);
-            last_forwarded = forwarded;
+            gateway.rollPerSecondWindow(now_ms);
             last_rate_sample_ms = now_ms;
 
             bus_stats.rollWindow(now_ms);
@@ -692,7 +688,7 @@ void canRuntimeTask(void* /*context*/) {
                 static_cast<unsigned long>(stats.rx_drops_boot),
                 static_cast<unsigned long>(stats.rx_drops_run),
                 static_cast<unsigned int>(stats.rx_queue_depth),
-                static_cast<unsigned long>(stats.passive_fast_path_frames),
+                static_cast<unsigned long>(stats.passive_direct_path_frames),
                 static_cast<unsigned long>(stats.observed_decoded_frames),
                 static_cast<unsigned int>(mutation_engine.activeCount()));
             last_stats_log_ms = now_ms;
@@ -1263,7 +1259,6 @@ void handleStatus() {
     FrameCacheSnapshot frames[kStatusFrameLimit];
     const size_t frame_count = frame_cache.snapshot(frames, kStatusFrameLimit);
 
-    const uint16_t fps = frame_rate_fps.load(std::memory_order_acquire);
 
     const BusWindowSnapshot bus_a_snapshot = bus_stats.snapshot(CanBus::kA);
     const BusWindowSnapshot bus_b_snapshot = bus_stats.snapshot(CanBus::kB);
@@ -1304,7 +1299,7 @@ void handleStatus() {
     json += "\"rx_drops_run\":" + String(stats.rx_drops_run) + ",";
     json += "\"dropped_frames\":" + String(stats.rx_drops_run) + ",";
     json += "\"forwarded_frames\":" + String(stats.forwarded_frames) + ",";
-    json += "\"passive_fast_path_frames\":" + String(stats.passive_fast_path_frames) + ",";
+    json += "\"passive_direct_path_frames\":" + String(stats.passive_direct_path_frames) + ",";
     json += "\"observed_decoded_frames\":" + String(stats.observed_decoded_frames) + ",";
     json += "\"active_mutations\":" + String(static_cast<uint32_t>(mutation_engine.activeCount())) + ",";
     json += "\"staging_mutations\":" + String(static_cast<uint32_t>(mutation_engine.stagingCount())) + ",";
@@ -1313,13 +1308,13 @@ void handleStatus() {
     json += "\"dbc_signal_count\":" + String(static_cast<uint32_t>(dbc != nullptr ? dbc->signalCount() : 0U)) + ",";
     json += "\"replay_frame_count\":" + String(static_cast<uint32_t>(replay_engine.frameCount())) + ",";
     json += "\"replay_playing\":" + String(replay_engine.isPlaying() ? "true" : "false") + ",";
-    json += "\"frame_rate_fps\":" + String(fps) + ",";
+    json += "\"frame_rate_fps\":" + String(stats.forwarded_frames_per_sec) + ",";
     json += "\"observation_mode\":\"" + String(observationModeToString(observation_manager.mode())) + "\",";
     json += "\"decode_all\":" + String(signal_cache.decodeAll() ? "true" : "false") + ",";
-    json += "\"fast_path_avg_us\":" + String(stats.fast_path_latency_avg_us) + ",";
-    json += "\"active_path_avg_us\":" + String(stats.active_path_latency_avg_us) + ",";
-    json += "\"fast_path_samples\":" + String(stats.fast_path_latency_samples) + ",";
-    json += "\"active_path_samples\":" + String(stats.active_path_latency_samples) + ",";
+    json += "\"direct_path_avg_us\":" + String(stats.direct_path_latency_avg_us) + ",";
+    json += "\"mutated_path_avg_us\":" + String(stats.mutated_path_latency_avg_us) + ",";
+    json += "\"direct_path_frames_per_sec\":" + String(stats.direct_path_frames_per_sec) + ",";
+    json += "\"mutated_path_frames_per_sec\":" + String(stats.mutated_path_frames_per_sec) + ",";
     appendActiveRulesJson(json);
     json += ",\"recent_frames\":[";
 

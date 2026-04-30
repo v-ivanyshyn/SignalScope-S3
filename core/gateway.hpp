@@ -19,17 +19,22 @@ struct GatewayStats {
     uint32_t forwarded_frames = 0;
     uint32_t replay_injected_frames = 0;
     uint32_t mutation_applied_frames = 0;
-    uint32_t passive_fast_path_frames = 0;
+    uint32_t passive_direct_path_frames = 0;
     uint32_t observed_decoded_frames = 0;
     uint32_t rx_drops_boot = 0;
     uint32_t rx_drops_run = 0;
     uint16_t rx_queue_depth = 0;
 
-    // Runtime latency (micros) from frame processing start to TX dispatch.
-    uint32_t fast_path_latency_avg_us = 0;
-    uint32_t active_path_latency_avg_us = 0;
-    uint32_t fast_path_latency_samples = 0;
-    uint32_t active_path_latency_samples = 0;
+    // Per completed 1 s window (see rollPerSecondWindow): mean latency (µs) and
+    // frame count in that window (= frames/s). Live ingress uses RX→TX; replay uses
+    // forwardFrame-only time (gateway.cpp).
+    uint32_t direct_path_latency_avg_us = 0;
+    uint32_t mutated_path_latency_avg_us = 0;
+    uint16_t direct_path_frames_per_sec = 0;
+    uint16_t mutated_path_frames_per_sec = 0;
+
+    // Forwarded frames processed in the last completed 1 s window (= frames/s).
+    uint16_t forwarded_frames_per_sec = 0;
 };
 
 class GatewayCore {
@@ -51,7 +56,12 @@ public:
     bool onFrameReceivedFromIsr(const CanFrame& frame);
     bool injectReplayFrame(const CanFrame& frame);
 
-    void pollRx(uint32_t now_us, uint32_t now_ms);
+    void pollRx(uint32_t now_ms);
+
+    // Closes the current 1 s window: publishes latency means and path frame rates,
+    // forwarded frame rate, and clears latency accumulators. Call once per second
+    // from the CAN runtime task on the same cadence as BusStats::rollWindow.
+    void rollPerSecondWindow(uint32_t now_ms);
 
     const GatewayStats& stats() const;
 
@@ -73,6 +83,12 @@ private:
 
     bool ready_gate_ = false;
     GatewayStats stats_{};
+
+    uint64_t direct_latency_window_sum_us_ = 0;
+    uint32_t direct_latency_window_count_ = 0;
+    uint64_t mutated_latency_window_sum_us_ = 0;
+    uint32_t mutated_latency_window_count_ = 0;
+    uint32_t last_forwarded_frames_at_roll_ = 0;
 };
 
 }  // namespace bored::signalscope
