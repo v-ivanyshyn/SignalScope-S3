@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "core/bus_stats.hpp"
 #include "core/dbc_parser.hpp"
 #include "core/frame_cache.hpp"
 #include "core/gateway.hpp"
@@ -56,6 +57,7 @@ FrameCache frame_cache;
 SignalCache signal_cache;
 ObservationManager observation_manager;
 PersistenceStore persistence;
+BusStats bus_stats;
 
 DbcDatabase dbc_database;
 std::atomic<const DbcDatabase*> active_dbc{nullptr};
@@ -475,6 +477,7 @@ bool readBusA(CanFrame& out_frame) {
     for (uint8_t i = 0; i < out_frame.dlc; ++i) out_frame.data[i] = rx.data[i];
     out_frame.timestamp_us = micros();
     out_frame.direction = Direction::A_TO_B;
+    bus_stats.addRxFrame(CanBus::kA, out_frame.dlc, rx.extd != 0);
     return true;
 }
 
@@ -482,11 +485,13 @@ bool readBusB(CanFrame& out_frame) {
     struct can_frame frame = {};
     if (can_mcp.readMessage(&frame) != MCP2515::ERROR_OK) return false;
 
+    const bool extended_id = (frame.can_id & CAN_EFF_FLAG) != 0U;
     out_frame.id = frame.can_id & CAN_EFF_MASK;
     out_frame.dlc = (frame.can_dlc <= 8U) ? frame.can_dlc : 8U;
     for (uint8_t i = 0; i < out_frame.dlc; ++i) out_frame.data[i] = frame.data[i];
     out_frame.timestamp_us = micros();
     out_frame.direction = Direction::B_TO_A;
+    bus_stats.addRxFrame(CanBus::kB, out_frame.dlc, extended_id);
     return true;
 }
 
@@ -500,7 +505,9 @@ bool writeBusA(const CanFrame& frame) {
     tx.data_length_code = (frame.dlc <= 8U) ? frame.dlc : 8U;
     for (uint8_t i = 0; i < tx.data_length_code; ++i) tx.data[i] = frame.data[i];
 
-    return twai_transmit(&tx, pdMS_TO_TICKS(1)) == ESP_OK;
+    const bool ok = twai_transmit(&tx, pdMS_TO_TICKS(1)) == ESP_OK;
+    if (ok) bus_stats.addTxFrame(CanBus::kA, tx.data_length_code, tx.extd != 0);
+    return ok;
 }
 
 bool writeBusB(const CanFrame& frame) {
@@ -512,7 +519,9 @@ bool writeBusB(const CanFrame& frame) {
     tx.can_dlc = (frame.dlc <= 8U) ? frame.dlc : 8U;
     for (uint8_t i = 0; i < tx.can_dlc; ++i) tx.data[i] = frame.data[i];
 
-    return can_mcp.sendMessage(&tx) == MCP2515::ERROR_OK;
+    const bool ok = can_mcp.sendMessage(&tx) == MCP2515::ERROR_OK;
+    if (ok) bus_stats.addTxFrame(CanBus::kB, tx.can_dlc, (tx.can_id & CAN_EFF_FLAG) != 0U);
+    return ok;
 }
 
 bool txDriver(Direction tx_direction, const CanFrame& frame) {
@@ -647,6 +656,33 @@ void canRuntimeTask(void* /*context*/) {
             frame_rate_fps.store(static_cast<uint16_t>(forwarded - last_forwarded), std::memory_order_release);
             last_forwarded = forwarded;
             last_rate_sample_ms = now_ms;
+
+            bus_stats.rollWindow(now_ms);
+
+            if (bus_a_ready.load(std::memory_order_acquire) != 0U) {
+                twai_status_info_t info{};
+                if (twai_get_status_info(&info) == ESP_OK) {
+                    // The TWAI driver tracks both queue-full and FIFO overrun
+                    // losses separately; we sum them so the UI shows total
+                    // hardware-side RX drops since boot.
+                    bus_stats.setHwDropsRxA(info.rx_missed_count + info.rx_overrun_count);
+                    bus_stats.setHwTxFailedA(info.tx_failed_count);
+                }
+            }
+
+            if (bus_b_ready.load(std::memory_order_acquire) != 0U) {
+                // MCP2515 EFLG bits are sticky latches: once a buffer
+                // overflows the bit stays high until cleared. Sample
+                // once per second, count one drop per latched buffer,
+                // then clear so the next overflow shows up next tick.
+                const uint8_t error_flags = can_mcp.getErrorFlags();
+                const bool rx0_overflow = (error_flags & MCP2515::EFLG_RX0OVR) != 0U;
+                const bool rx1_overflow = (error_flags & MCP2515::EFLG_RX1OVR) != 0U;
+                if (rx0_overflow || rx1_overflow) {
+                    bus_stats.bumpHwDropsRxB(rx0_overflow, rx1_overflow);
+                    can_mcp.clearRXnOVR();
+                }
+            }
         }
 
         if (now_ms - last_stats_log_ms >= 5000U) {
@@ -686,6 +722,7 @@ void setup() {
     signal_cache.init();
     observation_manager.init();
     persistence.begin();
+    bus_stats.init(500000U);
 
     gateway.setMutationEngine(&mutation_engine);
     gateway.setReplayEngine(&replay_engine);
@@ -1227,9 +1264,19 @@ void handleStatus() {
     const size_t frame_count = frame_cache.snapshot(frames, kStatusFrameLimit);
 
     const uint16_t fps = frame_rate_fps.load(std::memory_order_acquire);
-    const uint16_t bus_a = (fps > 1000U) ? 100U : static_cast<uint16_t>(fps / 10U);
-    const uint16_t bus_b = bus_a;
-    const uint16_t bus_total = (bus_a + bus_b > 100U) ? 100U : static_cast<uint16_t>(bus_a + bus_b);
+
+    const BusWindowSnapshot bus_a_snapshot = bus_stats.snapshot(CanBus::kA);
+    const BusWindowSnapshot bus_b_snapshot = bus_stats.snapshot(CanBus::kB);
+    // RX and TX traffic occupy disjoint slices of the same wire, so the
+    // combined per-bus utilization is just RX% + TX%, capped at 100.
+    const uint32_t bus_a_combined = static_cast<uint32_t>(bus_a_snapshot.rx_util_pct)
+        + static_cast<uint32_t>(bus_a_snapshot.tx_util_pct);
+    const uint32_t bus_b_combined = static_cast<uint32_t>(bus_b_snapshot.rx_util_pct)
+        + static_cast<uint32_t>(bus_b_snapshot.tx_util_pct);
+    const uint16_t bus_a_util = static_cast<uint16_t>(bus_a_combined > 100U ? 100U : bus_a_combined);
+    const uint16_t bus_b_util = static_cast<uint16_t>(bus_b_combined > 100U ? 100U : bus_b_combined);
+    const uint32_t bus_total_combined = static_cast<uint32_t>(bus_a_util) + static_cast<uint32_t>(bus_b_util);
+    const uint16_t bus_total_util = static_cast<uint16_t>(bus_total_combined > 100U ? 100U : bus_total_combined);
 
     String json;
     // Sized for up to ~256 distinct CAN IDs in the snapshot, each with a
@@ -1238,9 +1285,16 @@ void handleStatus() {
     json.reserve(60000);
     json += "{";
     json += "\"cpu_load_pct\":5,";
-    json += "\"bus_a_util_pct\":" + String(bus_a) + ",";
-    json += "\"bus_b_util_pct\":" + String(bus_b) + ",";
-    json += "\"bus_total_util_pct\":" + String(bus_total) + ",";
+    json += "\"bus_a_util_pct\":" + String(bus_a_util) + ",";
+    json += "\"bus_b_util_pct\":" + String(bus_b_util) + ",";
+    json += "\"bus_total_util_pct\":" + String(bus_total_util) + ",";
+    json += "\"bus_a_rx_util_pct\":" + String(bus_a_snapshot.rx_util_pct) + ",";
+    json += "\"bus_a_tx_util_pct\":" + String(bus_a_snapshot.tx_util_pct) + ",";
+    json += "\"bus_b_rx_util_pct\":" + String(bus_b_snapshot.rx_util_pct) + ",";
+    json += "\"bus_b_tx_util_pct\":" + String(bus_b_snapshot.tx_util_pct) + ",";
+    json += "\"bus_a_hw_drops\":" + String(bus_stats.hwDropsRx(CanBus::kA)) + ",";
+    json += "\"bus_b_hw_drops\":" + String(bus_stats.hwDropsRx(CanBus::kB)) + ",";
+    json += "\"bus_a_tx_failed\":" + String(bus_stats.hwTxFailed(CanBus::kA)) + ",";
     json += "\"bus_a_ready\":" + String(bus_a_ready.load(std::memory_order_acquire) ? "true" : "false") + ",";
     json += "\"bus_b_ready\":" + String(bus_b_ready.load(std::memory_order_acquire) ? "true" : "false") + ",";
     json += "\"ingress_a_frames\":" + String(ingress_a_frames.load(std::memory_order_relaxed)) + ",";

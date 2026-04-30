@@ -11,6 +11,8 @@ const dom = {
     busB: document.getElementById("bus-b"),
     rxDepth: document.getElementById("rx-depth"),
     dropped: document.getElementById("dropped"),
+    busAHwDrops: document.getElementById("bus-a-hw-drops"),
+    busBHwDrops: document.getElementById("bus-b-hw-drops"),
     fastPathAvg: document.getElementById("fast-path-avg"),
     activePathAvg: document.getElementById("active-path-avg"),
     replayStatus: document.getElementById("replay-status"),
@@ -857,6 +859,8 @@ function setOffline() {
     dom.busB.textContent = "offline";
     dom.rxDepth.textContent = "offline";
     dom.dropped.textContent = "offline";
+    if (dom.busAHwDrops) dom.busAHwDrops.textContent = "offline";
+    if (dom.busBHwDrops) dom.busBHwDrops.textContent = "offline";
     if (dom.fastPathAvg) dom.fastPathAvg.textContent = "offline";
     if (dom.activePathAvg) dom.activePathAvg.textContent = "offline";
     dom.dbcStatus.textContent = "No backend connection";
@@ -1077,10 +1081,20 @@ async function refreshStatus() {
 
         const status = await response.json();
         dom.cpuLoad.textContent = `${status.cpu_load_pct}%`;
-        dom.busA.textContent = status.bus_a_ready ? `${status.bus_a_util_pct}%` : "not ready";
-        dom.busB.textContent = status.bus_b_ready ? `${status.bus_b_util_pct}%` : "not ready";
+        dom.busA.textContent = status.bus_a_ready
+            ? `RX ${status.bus_a_rx_util_pct}% / TX ${status.bus_a_tx_util_pct}%`
+            : "not ready";
+        dom.busB.textContent = status.bus_b_ready
+            ? `RX ${status.bus_b_rx_util_pct}% / TX ${status.bus_b_tx_util_pct}%`
+            : "not ready";
         dom.rxDepth.textContent = `${status.rx_queue_depth}`;
         dom.dropped.textContent = `${status.dropped_frames}`;
+        if (dom.busAHwDrops) {
+            dom.busAHwDrops.textContent = status.bus_a_ready ? `${status.bus_a_hw_drops}` : "not ready";
+        }
+        if (dom.busBHwDrops) {
+            dom.busBHwDrops.textContent = status.bus_b_ready ? `${status.bus_b_hw_drops}` : "not ready";
+        }
         dom.mutationCount.textContent = `${status.active_mutations} active / ${status.staging_mutations} staging`;
         if (dom.fastPathAvg) {
             const n = Number(status.fast_path_samples || 0);
