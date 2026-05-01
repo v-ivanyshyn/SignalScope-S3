@@ -16,6 +16,7 @@
 #include "core/bus_stats.hpp"
 #include "core/dbc_parser.hpp"
 #include "core/frame_cache.hpp"
+#include "core/frame_changes_watch.hpp"
 #include "core/gateway.hpp"
 #include "core/mutation_engine.hpp"
 #include "core/observation_manager.hpp"
@@ -54,6 +55,7 @@ GatewayCore gateway;
 MutationEngine mutation_engine;
 ReplayEngine replay_engine;
 FrameCache frame_cache;
+FrameChangesWatch frame_changes_watch;
 SignalCache signal_cache;
 ObservationManager observation_manager;
 PersistenceStore persistence;
@@ -411,6 +413,46 @@ bool bodyContains(const String& body, const char* token) {
 bool findRuleIdByIdentity(uint32_t can_id, Direction direction, uint16_t start_bit, uint8_t bit_length, uint16_t& out_rule_id);
 bool findRuleIdByRawIdentity(uint32_t can_id, Direction direction, uint16_t& out_rule_id);
 
+struct StableBaselineEntry {
+    uint32_t can_id = 0;
+    Direction direction = Direction::A_TO_B;
+    uint8_t dlc = 0;
+    uint8_t data[8] = {0};
+    uint8_t stable_byte_mask = 0;
+};
+
+StableBaselineEntry baseline_entries[256];
+size_t baseline_entry_count = 0;
+bool baseline_capture_active = false;
+
+uint8_t byteMaskLowBits(uint8_t dlc) {
+    uint8_t mask = 0;
+    for (uint8_t bit_index = 0; bit_index < dlc && bit_index < 8U; ++bit_index) {
+        mask = static_cast<uint8_t>(mask | static_cast<uint8_t>(1U << bit_index));
+    }
+    return mask;
+}
+
+void clearBaseline() {
+    baseline_entry_count = 0;
+    baseline_capture_active = false;
+}
+
+void appendFrameChangesWatchStatusJson(String& json) {
+    json += "\"frame_changes_watch\":{";
+    const char* phase_text = "idle";
+    if (baseline_capture_active) {
+        phase_text = "baseline";
+    } else if (frame_changes_watch.isWatchActive()) {
+        phase_text = "watching";
+    }
+    json += "\"phase\":\"";
+    json += phase_text;
+    json += "\",\"baseline_tracked_frames\":";
+    json += String(static_cast<uint32_t>(baseline_capture_active ? baseline_entry_count : 0U));
+    json += "}";
+}
+
 // API handlers
 void handleStatus();
 void handleFrameCache();
@@ -428,6 +470,7 @@ void handleReplayLoad();
 void handleReplayControl();
 void handleDbcUpload();
 void handleDbcUnload();
+void handleFrameChangesWatch();
 void handleNotFound();
 void configureHttpServer();
 void startAccessPoint();
@@ -604,6 +647,7 @@ void configureHttpServer() {
 
     server.on("/api/status", HTTP_GET, handleStatus);
     server.on("/api/frame_cache", HTTP_GET, handleFrameCache);
+    server.on("/api/frame_changes/watch", HTTP_POST, handleFrameChangesWatch);
     server.on("/api/signal_cache", HTTP_GET, handleSignalCache);
     server.on("/api/observe", HTTP_POST, handleObserve);
 
@@ -755,6 +799,7 @@ void setup() {
     mutation_engine.init();
     replay_engine.init();
     frame_cache.init();
+    frame_changes_watch.init();
     signal_cache.init();
     observation_manager.init();
     persistence.begin();
@@ -764,6 +809,7 @@ void setup() {
     gateway.setReplayEngine(&replay_engine);
     gateway.setTxDriver(txDriver);
     gateway.setFrameCache(&frame_cache);
+    gateway.setFrameChangesWatch(&frame_changes_watch);
     gateway.setSignalCache(&signal_cache);
     gateway.setObservationManager(&observation_manager);
     gateway.setDbcPointer(&active_dbc);
@@ -1385,6 +1431,160 @@ void appendActiveRulesJson(String& json) {
     }
 }
 
+void handleFrameChangesWatch() {
+    if (!server.hasArg("action")) {
+        server.send(400, "application/json", "{\"ok\":false,\"error\":\"missing_action\"}");
+        return;
+    }
+
+    const String action = server.arg("action");
+
+    if (action == "start") {
+        if (baseline_capture_active) {
+            server.send(400, "application/json", "{\"ok\":false,\"error\":\"reset_required\"}");
+            return;
+        }
+        frame_changes_watch.startWatch();
+        server.send(200, "application/json", "{\"ok\":true,\"phase\":\"watching\"}");
+        return;
+    }
+
+    if (action == "reset") {
+        clearBaseline();
+        frame_changes_watch.reset();
+        server.send(200, "application/json", "{\"ok\":true,\"phase\":\"idle\"}");
+        return;
+    }
+
+    if (action != "fix") {
+        server.send(400, "application/json", "{\"ok\":false,\"error\":\"bad_action\"}");
+        return;
+    }
+
+    FrameCacheSnapshot frames[kStatusFrameLimit];
+    const size_t frame_count = frame_cache.snapshot(frames, kStatusFrameLimit);
+
+    if (frame_changes_watch.isWatchActive()) {
+        frame_changes_watch.stopWatch();
+
+        clearBaseline();
+        for (size_t snapshot_index = 0; snapshot_index < frame_count; ++snapshot_index) {
+            const FrameCacheSnapshot& snap = frames[snapshot_index];
+            const uint8_t dirty_mask = frame_changes_watch.dirtyMaskFor(snap.can_id, snap.direction);
+            const uint8_t dlc_mask = byteMaskLowBits(snap.dlc);
+            const uint8_t stable_byte_mask = static_cast<uint8_t>((~dirty_mask) & dlc_mask);
+            if (stable_byte_mask == 0U) {
+                continue;
+            }
+            if (baseline_entry_count >= 256U) {
+                break;
+            }
+            StableBaselineEntry& baseline_entry = baseline_entries[baseline_entry_count];
+            baseline_entry.can_id = snap.can_id;
+            baseline_entry.direction = snap.direction;
+            baseline_entry.dlc = snap.dlc;
+            std::memcpy(baseline_entry.data, snap.data, sizeof(baseline_entry.data));
+            baseline_entry.stable_byte_mask = stable_byte_mask;
+            ++baseline_entry_count;
+        }
+        baseline_capture_active = true;
+
+        String json;
+        json.reserve(12000);
+        json += "{\"ok\":true,\"phase\":\"baseline\",\"fix_result\":\"baseline_capture\",\"frames\":[";
+        for (size_t baseline_index = 0; baseline_index < baseline_entry_count; ++baseline_index) {
+            if (baseline_index > 0U) {
+                json += ",";
+            }
+            const StableBaselineEntry& baseline_entry = baseline_entries[baseline_index];
+            FrameCacheSnapshot row{};
+            row.can_id = baseline_entry.can_id;
+            row.direction = baseline_entry.direction;
+            row.dlc = baseline_entry.dlc;
+            std::memcpy(row.data, baseline_entry.data, sizeof(row.data));
+            json += "{";
+            json += "\"can_id\":" + String(baseline_entry.can_id) + ",";
+            json += "\"direction\":\"" + String(directionToString(baseline_entry.direction)) + "\",";
+            json += "\"dlc\":" + String(baseline_entry.dlc) + ",";
+            json += "\"data\":\"" + frameDataHex(row) + "\",";
+            json += "\"stable_byte_mask\":" + String(static_cast<uint32_t>(baseline_entry.stable_byte_mask));
+            json += "}";
+        }
+        json += "]}";
+        server.send(200, "application/json", json);
+        return;
+    }
+
+    if (!baseline_capture_active) {
+        server.send(400, "application/json", "{\"ok\":false,\"error\":\"invalid_fix_state\"}");
+        return;
+    }
+
+    String json;
+    json.reserve(12000);
+    json += "{\"ok\":true,\"phase\":\"baseline\",\"fix_result\":\"diff\",\"frames\":[";
+    bool first_diff_frame = true;
+    for (size_t baseline_index = 0; baseline_index < baseline_entry_count; ++baseline_index) {
+        const StableBaselineEntry& baseline_entry = baseline_entries[baseline_index];
+        const FrameCacheSnapshot* live_snapshot = nullptr;
+        for (size_t live_index = 0; live_index < frame_count; ++live_index) {
+            if (frames[live_index].can_id == baseline_entry.can_id &&
+                frames[live_index].direction == baseline_entry.direction) {
+                live_snapshot = &frames[live_index];
+                break;
+            }
+        }
+        if (live_snapshot == nullptr) {
+            continue;
+        }
+
+        const uint8_t compare_length =
+            (baseline_entry.dlc < live_snapshot->dlc) ? baseline_entry.dlc : live_snapshot->dlc;
+
+        String changed_bytes_json = "[";
+        bool first_changed_byte = true;
+        for (uint8_t byte_index = 0; byte_index < compare_length; ++byte_index) {
+            const uint8_t bit = static_cast<uint8_t>(1U << byte_index);
+            if ((baseline_entry.stable_byte_mask & bit) == 0U) {
+                continue;
+            }
+            if (baseline_entry.data[byte_index] == live_snapshot->data[byte_index]) {
+                continue;
+            }
+            if (!first_changed_byte) {
+                changed_bytes_json += ",";
+            }
+            first_changed_byte = false;
+            char from_hex[5] = {0};
+            char to_hex[5] = {0};
+            std::snprintf(from_hex, sizeof(from_hex), "%02X", baseline_entry.data[byte_index]);
+            std::snprintf(to_hex, sizeof(to_hex), "%02X", live_snapshot->data[byte_index]);
+            changed_bytes_json += "{\"byte_index\":" + String(static_cast<uint32_t>(byte_index)) + ",";
+            changed_bytes_json += "\"from\":\"" + String(from_hex) + "\",";
+            changed_bytes_json += "\"to\":\"" + String(to_hex) + "\"}";
+        }
+        changed_bytes_json += "]";
+
+        if (first_changed_byte) {
+            continue;
+        }
+
+        if (!first_diff_frame) {
+            json += ",";
+        }
+        first_diff_frame = false;
+        json += "{";
+        json += "\"can_id\":" + String(baseline_entry.can_id) + ",";
+        json += "\"direction\":\"" + String(directionToString(baseline_entry.direction)) + "\",";
+        json += "\"dlc\":" + String(live_snapshot->dlc) + ",";
+        json += "\"data\":\"" + frameDataHex(*live_snapshot) + "\",";
+        json += "\"changed_bytes\":" + changed_bytes_json;
+        json += "}";
+    }
+    json += "]}";
+    server.send(200, "application/json", json);
+}
+
 void handleStatus() {
     const GatewayStats& stats = gateway.stats();
     const DbcDatabase* dbc = active_dbc.load(std::memory_order_acquire);
@@ -1469,7 +1669,9 @@ void handleStatus() {
         appendDecodedSignalsJson(json, frames[i]);
         json += "}";
     }
-    json += "]}";
+    json += "],";
+    appendFrameChangesWatchStatusJson(json);
+    json += "}";
     server.send(200, "application/json", json);
 }
 

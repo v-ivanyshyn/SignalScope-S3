@@ -4,6 +4,7 @@ const dom = {
     frameFilterInput: document.getElementById("frame-filter-input"),
     frameFilterClear: document.getElementById("frame-filter-clear"),
     frameFilterSummary: document.getElementById("frame-filter-summary"),
+    liveFramesExportCsv: document.getElementById("live-frames-export-csv"),
     dbcStatus: document.getElementById("dbc-status"),
     mutationCount: document.getElementById("mutation-count"),
     cpuLoad: document.getElementById("cpu-load"),
@@ -33,6 +34,13 @@ const dom = {
     activeMutationsMasterOff: document.getElementById("active-mutations-master-off"),
     activeMutationsMasterOn: document.getElementById("active-mutations-master-on"),
     activeMutationsMasterOnce: document.getElementById("active-mutations-master-once"),
+
+    frameChangesWatchStatus: document.getElementById("frame-changes-watch-status"),
+    frameChangesWatchStart: document.getElementById("frame-changes-watch-start"),
+    frameChangesWatchFix: document.getElementById("frame-changes-watch-fix"),
+    frameChangesWatchReset: document.getElementById("frame-changes-watch-reset"),
+    frameChangesWatchResults: document.getElementById("frame-changes-watch-results"),
+    frameChangesWatchExportCsv: document.getElementById("frame-changes-watch-export-csv"),
 
     rawEditor: document.getElementById("raw-editor"),
     rawBitGrid: document.getElementById("raw-bit-grid"),
@@ -77,6 +85,8 @@ let currentFrameData = "";
 let rawOverrideModes = new Array(64).fill(-1); // -1 passthrough, 0 force0, 1 force1
 let frameFilterText = "";
 let lastRenderSourceFrames = [];
+/** Last successful Fix response `{ fix_result, frames }` for CSV export. */
+let lastFrameChangesWatchExportPayload = null;
 
 function escapeHtml(value) {
     return String(value ?? "")
@@ -838,6 +848,157 @@ function compareFramesByCanIdAscending(left, right) {
     return leftId - rightId;
 }
 
+function csvFilenameTimestamp() {
+    const now = new Date();
+    const pad = (value) => String(value).padStart(2, "0");
+    return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+}
+
+function csvEscapeCell(value) {
+    const text = value === null || value === undefined ? "" : String(value);
+    if (/[",\n\r]/.test(text)) {
+        return `"${text.replace(/"/g, '""')}"`;
+    }
+    return text;
+}
+
+function buildCsvLine(cells) {
+    return cells.map(csvEscapeCell).join(",");
+}
+
+function downloadCsvTextFile(filename, csvText) {
+    const bom = "\uFEFF";
+    const blob = new Blob([bom + csvText], { type: "text/csv;charset=utf-8" });
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    anchor.rel = "noopener";
+    anchor.click();
+    URL.revokeObjectURL(objectUrl);
+}
+
+function updateLiveFramesExportButtonVisibility() {
+    if (!dom.liveFramesExportCsv) {
+        return;
+    }
+    const hasRows = Array.isArray(displayedFrames) && displayedFrames.length > 0;
+    dom.liveFramesExportCsv.hidden = !hasRows;
+}
+
+function updateFrameChangesWatchExportButtonVisibility() {
+    if (!dom.frameChangesWatchExportCsv) {
+        return;
+    }
+    const frames = lastFrameChangesWatchExportPayload && lastFrameChangesWatchExportPayload.frames;
+    const hasExportable = Array.isArray(frames) && frames.length > 0;
+    dom.frameChangesWatchExportCsv.hidden = !hasExportable;
+}
+
+/** Hex line as shown in Live Frames / baseline Data column (single spaces between tokens). */
+function normalizedHexLineFromDataString(dataString) {
+    const tokens = String(dataString ?? "")
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean);
+    return tokens.join(" ");
+}
+
+/** Plain-text Live Frames Data cell: hex row plus optional second line (message, mutation chip, decoded previews). */
+function liveFrameDisplayedDataCellForCsv(frame) {
+    const decoded = Array.isArray(frame.decoded_signals) ? frame.decoded_signals : [];
+    const hasRuleMutation = frame && (frame.mutated === true || frame.mutated === "true");
+    const hexLine = normalizedHexLineFromDataString(frame.data);
+    const decodedPreviewTexts = decoded.slice(0, 3).map((sig) => {
+        const name = sig.name || "signal";
+        return `${name}=${formatSignalValue(sig.value)}`;
+    });
+    const suffixParts = [];
+    if (frame.message_name && String(frame.message_name).length > 0) {
+        suffixParts.push(`${frame.message_name}:`);
+    }
+    if (hasRuleMutation) {
+        suffixParts.push("mutation active");
+    }
+    suffixParts.push(...decodedPreviewTexts);
+    if (decoded.length > 3) {
+        suffixParts.push(`+${decoded.length - 3}`);
+    }
+    if (suffixParts.length === 0) {
+        return hexLine;
+    }
+    return `${hexLine}\n${suffixParts.join(" ")}`;
+}
+
+/** Plain-text Frame Changes Data cell to match the results table (baseline = hex; diff = AA→BB where changed). */
+function frameChangesWatchDisplayedDataCellForCsv(frame, fixResult) {
+    if (fixResult === "diff") {
+        const byteTokens = parseSpacedHexByteTokens(frame.data || "");
+        const declaredDlc = Number(frame.dlc);
+        const byteCount = Number.isFinite(declaredDlc)
+            ? Math.min(Math.max(declaredDlc, 0), byteTokens.length)
+            : byteTokens.length;
+        const changedByByteIndex = new Map();
+        (frame.changed_bytes || []).forEach((entry) => {
+            const byteIndex = Number(entry.byte_index);
+            if (!Number.isFinite(byteIndex) || byteIndex < 0) {
+                return;
+            }
+            changedByByteIndex.set(byteIndex, {
+                from: String(entry.from ?? "").toUpperCase(),
+                to: String(entry.to ?? "").toUpperCase(),
+            });
+        });
+        const pieces = [];
+        for (let byteIndex = 0; byteIndex < byteCount; byteIndex += 1) {
+            const token = byteTokens[byteIndex] ?? "??";
+            const change = changedByByteIndex.get(byteIndex);
+            pieces.push(change ? `${change.from}→${change.to}` : token);
+        }
+        return pieces.join(" ");
+    }
+    return normalizedHexLineFromDataString(frame.data);
+}
+
+function exportDisplayedLiveFramesToCsv() {
+    if (!Array.isArray(displayedFrames) || displayedFrames.length === 0) {
+        return;
+    }
+    const header = ["ID", "DLC", "Direction", "Data", "Period"];
+    const lines = [buildCsvLine(header)];
+    displayedFrames.forEach((frame) => {
+        lines.push(
+            buildCsvLine([
+                frame.id || "-",
+                String(frame.dlc ?? "-"),
+                frame.direction || "-",
+                liveFrameDisplayedDataCellForCsv(frame),
+                formatPeriodMs(frame.period_ms),
+            ]),
+        );
+    });
+    downloadCsvTextFile(`live-frames-${csvFilenameTimestamp()}.csv`, `${lines.join("\r\n")}\r\n`);
+}
+
+function exportLastFrameChangesWatchToCsv() {
+    const payload = lastFrameChangesWatchExportPayload;
+    if (!payload || !Array.isArray(payload.frames) || payload.frames.length === 0) {
+        return;
+    }
+    const fixResult = payload.fix_result || "";
+    const header = ["ID", "Data"];
+    const lines = [buildCsvLine(header)];
+    payload.frames.forEach((frame) => {
+        lines.push(
+            buildCsvLine([
+                formatCanIdNumeric(frame.can_id),
+                frameChangesWatchDisplayedDataCellForCsv(frame, fixResult),
+            ]),
+        );
+    });
+    downloadCsvTextFile(`frame-changes-watch-${csvFilenameTimestamp()}.csv`, `${lines.join("\r\n")}\r\n`);
+}
+
 function renderFrames(frames) {
     lastRenderSourceFrames = Array.isArray(frames) ? frames.slice() : [];
     const { filtered, parsed, hasFilter, total } = applyFrameFilter(frames);
@@ -852,6 +1013,7 @@ function renderFrames(frames) {
         dom.frameTable.innerHTML = hasFilter
             ? '<tr><td colspan="5" class="text-muted">No frames match current filter</td></tr>'
             : '<tr><td colspan="5" class="text-muted">Waiting for CAN frames...</td></tr>';
+        updateLiveFramesExportButtonVisibility();
         return;
     }
 
@@ -906,6 +1068,7 @@ function renderFrames(frames) {
 
         dom.frameTable.appendChild(row);
     });
+    updateLiveFramesExportButtonVisibility();
 }
 
 function setOffline() {
@@ -1043,6 +1206,24 @@ function mutationFormParams() {
     params.set("operation", forcedRawOperation ? "REPLACE" : (dom.mutOperation.value || "PASS_THROUGH"));
     params.set("op_value1", dom.mutV1.value || "0");
     params.set("op_value2", dom.mutV2.value || "0");
+    params.set("enabled", "false");
+    return params;
+}
+
+/** Form body for `/api/mutations/stage`: full-byte REPLACE (matches default editor scaling). */
+function replaceByteMutationStageParams(canId, direction, byteIndex, replaceByteValue) {
+    const params = new URLSearchParams();
+    params.set("can_id", String(canId));
+    params.set("direction", direction || "A_TO_B");
+    params.set("start_bit", String(Math.max(0, byteIndex) * 8));
+    params.set("length", "8");
+    params.set("little_endian", "true");
+    params.set("is_signed", "false");
+    params.set("factor", "1");
+    params.set("offset", "0");
+    params.set("operation", "REPLACE");
+    params.set("op_value1", String(replaceByteValue));
+    params.set("op_value2", "0");
     params.set("enabled", "false");
     return params;
 }
@@ -1245,6 +1426,324 @@ function renderActiveMutations(items) {
     });
 }
 
+function formatCanIdNumeric(canId) {
+    const numeric = Number(canId);
+    if (!Number.isFinite(numeric)) {
+        return String(canId ?? "");
+    }
+    return `0x${numeric.toString(16).toUpperCase().padStart(3, "0")}`;
+}
+
+function setFrameChangesWatchStatusForPhase(phase) {
+    if (!dom.frameChangesWatchStatus) {
+        return;
+    }
+    const phaseClassName = "frame-changes-watch-phase small text-muted mb-2";
+    if (phase === "watching") {
+        dom.frameChangesWatchStatus.textContent = "Watching Changing Frames…";
+        dom.frameChangesWatchStatus.className = phaseClassName;
+        return;
+    }
+    if (phase === "baseline") {
+        dom.frameChangesWatchStatus.textContent =
+            "Baseline captured — Press 'Fix Changed Frames' to compare live bytes changes to the snapshot";
+        dom.frameChangesWatchStatus.className = phaseClassName;
+        return;
+    }
+    dom.frameChangesWatchStatus.textContent = "Press Start Watch Changes";
+    dom.frameChangesWatchStatus.className = phaseClassName;
+}
+
+function syncFrameChangesWatchButtons(phase) {
+    if (dom.frameChangesWatchStart) {
+        dom.frameChangesWatchStart.disabled = phase !== "idle";
+    }
+    if (dom.frameChangesWatchFix) {
+        dom.frameChangesWatchFix.disabled = phase !== "watching" && phase !== "baseline";
+    }
+}
+
+function applyFrameChangesWatchFromStatus(status) {
+    const watchInfo = status && status.frame_changes_watch;
+    const phase = (watchInfo && watchInfo.phase) || "idle";
+    setFrameChangesWatchStatusForPhase(phase);
+    syncFrameChangesWatchButtons(phase);
+}
+
+function clearFrameChangesWatchResults() {
+    if (dom.frameChangesWatchResults) {
+        dom.frameChangesWatchResults.innerHTML = "";
+    }
+}
+
+function parseSpacedHexByteTokens(dataString) {
+    if (!dataString || typeof dataString !== "string") {
+        return [];
+    }
+    return dataString
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((token) => token.toUpperCase());
+}
+
+function frameChangesWatchResultsTableHtml(tbodyRowsHtml, options) {
+    const stageMutationColumn = Boolean(options && options.stageMutationColumn);
+    const actionsHeader = stageMutationColumn ? '<th class="text-end">Actions</th>' : "";
+    return `<div class="table-responsive">
+<table class="table table-centered table-hover align-middle mb-0" id="frame-changes-watch-results-table">
+<thead>
+<tr>
+<th>ID</th>
+<th>Data</th>${actionsHeader}
+</tr>
+</thead>
+<tbody>${tbodyRowsHtml}</tbody>
+</table>
+</div>`;
+}
+
+function renderFrameChangesWatchBaselineCapture(frames) {
+    if (!dom.frameChangesWatchResults) {
+        return;
+    }
+    if (!Array.isArray(frames) || frames.length === 0) {
+        dom.frameChangesWatchResults.innerHTML = frameChangesWatchResultsTableHtml(
+            '<tr><td colspan="2" class="text-muted">No frames had stable bytes during watch.</td></tr>',
+        );
+        return;
+    }
+    const rows = frames.map((frame) => {
+        const idText = formatCanIdNumeric(frame.can_id);
+        const dataInner = renderFrameDataBytes(frame.data || "", 0);
+        return `<tr><td>${escapeHtml(idText)}</td><td><div class="fw-semibold frame-data">${dataInner}</div></td></tr>`;
+    });
+    dom.frameChangesWatchResults.innerHTML = frameChangesWatchResultsTableHtml(rows.join(""));
+}
+
+function sortedFrameChangesWatchChangedBytes(frame) {
+    const list = Array.isArray(frame.changed_bytes) ? frame.changed_bytes.slice() : [];
+    list.sort((left, right) => Number(left.byte_index) - Number(right.byte_index));
+    return list.filter((entry) => {
+        const byteIndex = Number(entry.byte_index);
+        return Number.isFinite(byteIndex) && byteIndex >= 0;
+    });
+}
+
+function parseHexByteForMutation(hexToken) {
+    const cleaned = String(hexToken ?? "").trim();
+    if (!/^[0-9A-Fa-f]{1,2}$/.test(cleaned)) {
+        return NaN;
+    }
+    return parseInt(cleaned, 16);
+}
+
+async function stageFrameChangesWatchMutationsForRow(rowIndex) {
+    const payload = lastFrameChangesWatchExportPayload;
+    if (!payload || payload.fix_result !== "diff" || !Array.isArray(payload.frames)) {
+        dom.replayStatus.textContent = "Nothing to stage (refresh diff first)";
+        return;
+    }
+    const frame = payload.frames[rowIndex];
+    if (!frame) {
+        return;
+    }
+    const changedEntries = sortedFrameChangesWatchChangedBytes(frame);
+    if (changedEntries.length === 0) {
+        dom.replayStatus.textContent = "No changed bytes for this row";
+        return;
+    }
+
+    const failures = [];
+    for (let entryIndex = 0; entryIndex < changedEntries.length; entryIndex += 1) {
+        const entry = changedEntries[entryIndex];
+        const byteIndex = Number(entry.byte_index);
+        const rawValue = parseHexByteForMutation(entry.to);
+        if (!Number.isFinite(rawValue)) {
+            failures.push(`byte ${byteIndex}: bad hex "${entry.to}"`);
+            continue;
+        }
+        const params = replaceByteMutationStageParams(frame.can_id, frame.direction, byteIndex, rawValue);
+        let response;
+        try {
+            response = await postForm("/api/mutations/stage", params);
+        } catch (error) {
+            const message = error && error.message ? error.message : "request failed";
+            failures.push(`byte ${byteIndex}: ${message}`);
+            continue;
+        }
+        if (!response.ok || !response.body || response.body.ok !== true) {
+            const reason = response.body?.error || response.body?.message || `HTTP ${response.status}`;
+            failures.push(`byte ${byteIndex}: ${reason}`);
+        }
+    }
+
+    if (failures.length > 0) {
+        dom.replayStatus.textContent = `Stage Mutation partial failure: ${failures.join("; ")}`;
+    } else {
+        // `/api/mutations/stage` only fills the staging buffer; Active Mutations lists the
+        // committed table (`listRules` → active_table). Same as the main Apply button: commit
+        // after staging. Note: apply_commit promotes all currently staged rules, not only
+        // those from this row.
+        const commit = await postJson("/api/mutations", { action: "apply_commit" });
+        if (!commit.ok) {
+            dom.replayStatus.textContent =
+                `Staged ${changedEntries.length} REPLACE mutation(s) for ${formatCanIdNumeric(frame.can_id)} — commit failed; use Apply`;
+        } else {
+            dom.replayStatus.textContent =
+                `Committed ${changedEntries.length} REPLACE mutation(s) for ${formatCanIdNumeric(frame.can_id)}`;
+        }
+    }
+    await refreshStatus();
+}
+
+function renderFrameChangesWatchDiff(frames) {
+    if (!dom.frameChangesWatchResults) {
+        return;
+    }
+    if (!Array.isArray(frames) || frames.length === 0) {
+        dom.frameChangesWatchResults.innerHTML = frameChangesWatchResultsTableHtml(
+            '<tr><td colspan="3" class="text-muted">No stable-byte changes vs baseline.</td></tr>',
+            { stageMutationColumn: true },
+        );
+        return;
+    }
+    const rows = frames.map((frame, frameIndex) => {
+        const idText = formatCanIdNumeric(frame.can_id);
+        const byteTokens = parseSpacedHexByteTokens(frame.data || "");
+        const declaredDlc = Number(frame.dlc);
+        const byteCount = Number.isFinite(declaredDlc) ? Math.min(Math.max(declaredDlc, 0), byteTokens.length) : byteTokens.length;
+
+        const changedByByteIndex = new Map();
+        (frame.changed_bytes || []).forEach((entry) => {
+            const byteIndex = Number(entry.byte_index);
+            if (!Number.isFinite(byteIndex) || byteIndex < 0) {
+                return;
+            }
+            changedByByteIndex.set(byteIndex, {
+                from: String(entry.from ?? "").toUpperCase(),
+                to: String(entry.to ?? "").toUpperCase(),
+            });
+        });
+
+        const renderedBytes = [];
+        for (let byteIndex = 0; byteIndex < byteCount; byteIndex += 1) {
+            const token = byteTokens[byteIndex] ?? "??";
+            const change = changedByByteIndex.get(byteIndex);
+            if (change) {
+                const title = `byte ${byteIndex}: ${change.from} → ${change.to}`;
+                renderedBytes.push(
+                    `<span class="frame-byte frame-byte-changed" title="${escapeHtml(title)}">${escapeHtml(change.from)}→${escapeHtml(change.to)}</span>`,
+                );
+            } else {
+                renderedBytes.push(`<span class="frame-byte">${escapeHtml(token)}</span>`);
+            }
+        }
+
+        const dataInner = renderedBytes.join(" ");
+        const stageButton = `<button type="button" class="btn btn-sm btn-outline-primary frame-changes-watch-stage-mutation-btn" data-frame-changes-watch-stage-row="${frameIndex}">Stage</button>`;
+        return `<tr><td>${escapeHtml(idText)}</td><td><div class="fw-semibold frame-data">${dataInner}</div></td><td class="text-end">${stageButton}</td></tr>`;
+    });
+    dom.frameChangesWatchResults.innerHTML = frameChangesWatchResultsTableHtml(rows.join(""), {
+        stageMutationColumn: true,
+    });
+}
+
+async function postFrameChangesWatchAction(action) {
+    const params = new URLSearchParams();
+    params.set("action", action);
+    return postForm("/api/frame_changes/watch", params);
+}
+
+dom.frameChangesWatchStart?.addEventListener("click", async () => {
+    if (!dom.frameChangesWatchStart || dom.frameChangesWatchStart.disabled) {
+        return;
+    }
+    dom.frameChangesWatchStart.disabled = true;
+    const response = await postFrameChangesWatchAction("start");
+    dom.frameChangesWatchStart.disabled = false;
+    if (!response.ok || !response.body || response.body.ok !== true) {
+        dom.replayStatus.textContent = response.body?.error || "Start watching failed";
+        return;
+    }
+    clearFrameChangesWatchResults();
+    lastFrameChangesWatchExportPayload = null;
+    updateFrameChangesWatchExportButtonVisibility();
+    dom.replayStatus.textContent = "Watching frame changes";
+    refreshStatus();
+});
+
+dom.frameChangesWatchFix?.addEventListener("click", async () => {
+    if (!dom.frameChangesWatchFix || dom.frameChangesWatchFix.disabled) {
+        return;
+    }
+    dom.frameChangesWatchFix.disabled = true;
+    const response = await postFrameChangesWatchAction("fix");
+    dom.frameChangesWatchFix.disabled = false;
+    if (!response.ok || !response.body || response.body.ok !== true) {
+        dom.replayStatus.textContent = response.body?.error || "Fix frames failed";
+        refreshStatus();
+        return;
+    }
+    const body = response.body;
+    if (body.fix_result === "baseline_capture") {
+        lastFrameChangesWatchExportPayload = {
+            fix_result: body.fix_result,
+            frames: Array.isArray(body.frames) ? body.frames : [],
+        };
+        renderFrameChangesWatchBaselineCapture(body.frames);
+    } else if (body.fix_result === "diff") {
+        lastFrameChangesWatchExportPayload = {
+            fix_result: body.fix_result,
+            frames: Array.isArray(body.frames) ? body.frames : [],
+        };
+        renderFrameChangesWatchDiff(body.frames);
+    }
+    updateFrameChangesWatchExportButtonVisibility();
+    dom.replayStatus.textContent =
+        body.fix_result === "baseline_capture" ? "Baseline captured" : "Diff updated";
+    refreshStatus();
+});
+
+dom.frameChangesWatchReset?.addEventListener("click", async () => {
+    const response = await postFrameChangesWatchAction("reset");
+    if (!response.ok || !response.body || response.body.ok !== true) {
+        dom.replayStatus.textContent = response.body?.error || "Reset failed";
+        refreshStatus();
+        return;
+    }
+    clearFrameChangesWatchResults();
+    lastFrameChangesWatchExportPayload = null;
+    updateFrameChangesWatchExportButtonVisibility();
+    dom.replayStatus.textContent = "Frame changes watch reset";
+    refreshStatus();
+});
+
+dom.liveFramesExportCsv?.addEventListener("click", () => {
+    exportDisplayedLiveFramesToCsv();
+});
+
+dom.frameChangesWatchExportCsv?.addEventListener("click", () => {
+    exportLastFrameChangesWatchToCsv();
+});
+
+dom.frameChangesWatchResults?.addEventListener("click", async (event) => {
+    const button = event.target.closest(".frame-changes-watch-stage-mutation-btn");
+    if (!button || !(button instanceof HTMLButtonElement) || button.disabled) {
+        return;
+    }
+    const rowIndex = Number(button.dataset.frameChangesWatchStageRow);
+    if (!Number.isFinite(rowIndex)) {
+        return;
+    }
+    button.disabled = true;
+    try {
+        await stageFrameChangesWatchMutationsForRow(rowIndex);
+    } finally {
+        button.disabled = false;
+    }
+});
+
 mutationMasterModeButtons().forEach((button) => {
     button.addEventListener("click", async () => {
         const mode = button.dataset.mutationMode;
@@ -1299,6 +1798,7 @@ async function refreshStatus() {
         }
 
         renderActiveMutations(status.active_mutation_items || []);
+        applyFrameChangesWatchFromStatus(status);
 
         latestIncomingFrames = status.recent_frames || [];
         if (!framesPaused) {
@@ -1320,6 +1820,7 @@ async function refreshStatus() {
         }
     } catch (_error) {
         setOffline();
+        applyFrameChangesWatchFromStatus({ frame_changes_watch: { phase: "idle" } });
         latestIncomingFrames = [offlineDemoCanFrame];
         if (!framesPaused) {
             renderFrames(latestIncomingFrames);

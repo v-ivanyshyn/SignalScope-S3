@@ -10,6 +10,7 @@
 namespace bored::signalscope {
 
 class FrameCache;
+class FrameChangesWatch;
 class MutationEngine;
 class ObservationManager;
 class ReplayEngine;
@@ -48,6 +49,7 @@ public:
     void setReplayEngine(ReplayEngine* engine);
     void setTxDriver(TxDriver driver);
     void setFrameCache(FrameCache* cache);
+    void setFrameChangesWatch(FrameChangesWatch* watch);
     void setSignalCache(SignalCache* cache);
     void setObservationManager(ObservationManager* manager);
     void setDbcPointer(const std::atomic<const DbcDatabase*>* dbc_ptr);
@@ -77,6 +79,7 @@ private:
     ReplayEngine* replay_engine_ = nullptr;
     TxDriver tx_driver_ = nullptr;
     FrameCache* frame_cache_ = nullptr;
+    FrameChangesWatch* frame_changes_watch_ = nullptr;
     SignalCache* signal_cache_ = nullptr;
     ObservationManager* observation_manager_ = nullptr;
     const std::atomic<const DbcDatabase*>* dbc_active_ptr_ = nullptr;

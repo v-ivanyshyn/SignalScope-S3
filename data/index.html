@@ -94,6 +94,13 @@
                     </li>
 
                     <li class="side-nav-item">
+                        <a href="#frame-changes-watch-panel" class="side-nav-link">
+                            <i class="ri-eye-line"></i>
+                            <span>Live Frames Changes</span>
+                        </a>
+                    </li>
+
+                    <li class="side-nav-item">
                         <a href="#dbc-panel" class="side-nav-link">
                             <i class="ri-file-upload-line"></i>
                             <span>DBC</span>
@@ -183,6 +190,11 @@
                                                 <tr><td colspan="5" class="text-muted">Waiting for CAN frames...</td></tr>
                                             </tbody>
                                         </table>
+                                    </div>
+                                    <div class="d-flex justify-content-end mt-2">
+                                        <button type="button" class="btn btn-sm btn-outline-secondary" id="live-frames-export-csv" hidden>
+                                            Export CSV
+                                        </button>
                                     </div>
                                 </div>
                             </div>
@@ -338,10 +350,37 @@
                                                     <button type="button" class="btn btn-sm btn-outline-secondary" id="active-mutations-master-once" data-mutation-mode="single_shot" title="Set all mutations to Once">Once</button>
                                                 </div>
                                             </div>
-                                            <button type="button" class="btn btn-sm btn-outline-danger flex-shrink-0" id="clear-staging-btn">Clear All</button>
+                                            <button type="button" class="btn btn-sm btn-outline-danger flex-shrink-0" id="clear-staging-btn">Remove All</button>
                                         </div>
                                         <div id="active-mutation-list" class="list-group list-group-flush">
                                             <div class="text-muted small">No active mutations</div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="card" id="frame-changes-watch-panel">
+                                    <div class="card-body">
+                                        <h4 class="header-title mb-2">Live Frames Changes</h4>
+                                        <p class="text-muted small mb-3 mb-xl-2">
+                                            Record which bytes get changed during a watch window.<br/>When pressing "Fix Changed Frames" the first time lock a baseline of stable bytes.<br/>On further steps compare live traffic to the initial snapshot
+                                        </p>
+                                        <div class="d-flex flex-wrap gap-2 mb-2" aria-label="Frame changes watch actions">
+                                            <button type="button" class="btn btn-sm btn-outline-primary" id="frame-changes-watch-start">
+                                                Start Watching Changes
+                                            </button>
+                                            <button type="button" class="btn btn-sm btn-outline-primary" id="frame-changes-watch-fix" disabled>
+                                                Fix Changed Frames
+                                            </button>
+                                            <button type="button" class="btn btn-sm btn-outline-danger flex-shrink-0" id="frame-changes-watch-reset">Reset</button>
+                                        </div>
+                                        <p id="frame-changes-watch-status" class="frame-changes-watch-phase small text-muted mb-2" role="status">
+                                            Press 'Start Watching Changes'
+                                        </p>
+                                        <div id="frame-changes-watch-results" class="frame-changes-watch-results"></div>
+                                        <div class="d-flex justify-content-end mt-2">
+                                            <button type="button" class="btn btn-sm btn-outline-secondary" id="frame-changes-watch-export-csv" hidden>
+                                                Export CSV
+                                            </button>
                                         </div>
                                     </div>
                                 </div>

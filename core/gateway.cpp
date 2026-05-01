@@ -3,6 +3,7 @@
 #include <Arduino.h>
 
 #include "frame_cache.hpp"
+#include "frame_changes_watch.hpp"
 #include "mutation_engine.hpp"
 #include "observation_manager.hpp"
 #include "signal_cache.hpp"
@@ -49,6 +50,10 @@ void GatewayCore::setTxDriver(TxDriver driver) {
 
 void GatewayCore::setFrameCache(FrameCache* cache) {
     frame_cache_ = cache;
+}
+
+void GatewayCore::setFrameChangesWatch(FrameChangesWatch* watch) {
+    frame_changes_watch_ = watch;
 }
 
 void GatewayCore::setSignalCache(SignalCache* cache) {
@@ -156,6 +161,9 @@ void GatewayCore::forwardFrame(CanFrame& frame, bool from_replay, uint32_t now_m
         if (frame_cache_ != nullptr) {
             frame_cache_->update(frame, now_ms, false);
         }
+        if (frame_changes_watch_ != nullptr) {
+            frame_changes_watch_->observeFrame(frame);
+        }
 
         bool tx_attempted = false;
         if (tx_driver_ != nullptr) {
@@ -193,6 +201,9 @@ void GatewayCore::forwardFrame(CanFrame& frame, bool from_replay, uint32_t now_m
 
     if (frame_cache_ != nullptr) {
         frame_cache_->update(frame, now_ms, applied_rules > 0U);
+    }
+    if (frame_changes_watch_ != nullptr) {
+        frame_changes_watch_->observeFrame(frame);
     }
 
     bool tx_attempted = false;
