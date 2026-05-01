@@ -101,17 +101,22 @@
             var row = document.createElement('div');
             row.className = 'fw-card-collapse-row';
 
-            var title = document.createElement('span');
-            title.className = 'fw-card-collapse-title';
-            title.textContent = String(headingText || 'Section').trim() || 'Section';
-            row.appendChild(title);
-
             var btn = document.createElement('button');
             btn.type = 'button';
             btn.className = 'btn btn-sm btn-outline-secondary fw-card-collapse-toggle';
             btn.innerHTML = '<i class="ri-subtract-line"></i><span class="visually-hidden">Toggle block</span>';
             row.appendChild(btn);
+
+            var title = document.createElement('span');
+            title.className = 'fw-card-collapse-title header-title mb-0';
+            title.textContent = String(headingText || 'Section').trim() || 'Section';
+            row.appendChild(title);
+
             body.insertBefore(row, body.firstChild);
+
+            if (headingNode) {
+                headingNode.classList.add('fw-card-collapse-heading-source');
+            }
 
             var startCollapsed = Boolean(collapsedState[cardId]);
             setCardCollapsed(card, startCollapsed);

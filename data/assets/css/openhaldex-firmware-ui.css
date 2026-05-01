@@ -175,30 +175,34 @@ html {
 .fw-card-collapse-row {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-start;
+    flex-direction: row;
+    flex-wrap: nowrap;
     gap: 0.55rem;
     margin-bottom: 0.5rem;
 }
 
 .fw-card-collapse-title {
-    display: none;
-    font-size: 0.82rem;
-    font-weight: 600;
+    display: block;
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
     color: var(--tz-heading-color);
 }
 
 .fw-card-collapse-toggle {
+    flex-shrink: 0;
     min-height: auto;
     padding: 0.2rem 0.45rem;
     line-height: 1;
 }
 
-.fw-card-collapsed .fw-card-collapse-row {
-    margin-bottom: 0;
+.fw-card-collapse-heading-source {
+    display: none !important;
 }
 
-.fw-card-collapsed .fw-card-collapse-title {
-    display: inline;
+.fw-card-collapsed .fw-card-collapse-row {
+    margin-bottom: 0;
 }
 
 .fw-card-collapsed .card-body > :not(.fw-card-collapse-row) {

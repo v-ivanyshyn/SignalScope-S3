@@ -48,7 +48,9 @@ const dom = {
     mutFactor: document.getElementById("mut-factor"),
     mutOffset: document.getElementById("mut-offset"),
     mutV1: document.getElementById("mut-v1"),
+    mutV1Hex: document.getElementById("mut-v1-hex"),
     mutV2: document.getElementById("mut-v2"),
+    mutV2Hex: document.getElementById("mut-v2-hex"),
     mutEnabled: document.getElementById("mut-enabled"),
 
     opParam1Group: document.getElementById("op-param1-group"),
@@ -56,6 +58,16 @@ const dom = {
     opParam2Group: document.getElementById("op-param2-group"),
     opParam2Label: document.getElementById("op-param2-label"),
 };
+
+/** Shown in Live Frames when the page is opened locally with no ESP32 / API backend. */
+const offlineDemoCanFrame = Object.freeze({
+    id: "0x0",
+    can_id: 0,
+    dlc: 8,
+    direction: "A_TO_B",
+    data: "01 02 03 04 05 06 07 08",
+    period_ms: null,
+});
 
 let displayedFrames = [];
 let latestIncomingFrames = [];
@@ -85,6 +97,45 @@ function formatPeriodMs(value) {
         return `${(milliseconds / 1000).toFixed(2)} s`;
     }
     return `${milliseconds} ms`;
+}
+
+/** Integer view of the operation value for the hex hint (truncates floats; integer strings use BigInt). */
+function formatMutationOpValueHex(rawString) {
+    const trimmed = String(rawString ?? "").trim();
+    if (trimmed === "" || trimmed === "-" || trimmed === "." || trimmed === "-.") {
+        return "0x0";
+    }
+
+    if (/^-?\d+$/.test(trimmed)) {
+        try {
+            const bigValue = BigInt(trimmed);
+            const magnitude = bigValue < 0n ? -bigValue : bigValue;
+            const hexBody = magnitude.toString(16).toUpperCase();
+            return bigValue < 0n ? `-0x${hexBody}` : `0x${hexBody}`;
+        } catch (_error) {
+            return "0x—";
+        }
+    }
+
+    const numericValue = Number(trimmed);
+    if (!Number.isFinite(numericValue)) {
+        return "0x—";
+    }
+
+    const integerPart = Math.trunc(numericValue);
+    if (integerPart < 0) {
+        return `-0x${Math.abs(integerPart).toString(16).toUpperCase()}`;
+    }
+    return `0x${integerPart.toString(16).toUpperCase()}`;
+}
+
+function updateMutationOpValueHexLabels() {
+    if (dom.mutV1Hex && dom.mutV1) {
+        dom.mutV1Hex.textContent = formatMutationOpValueHex(dom.mutV1.value);
+    }
+    if (dom.mutV2Hex && dom.mutV2) {
+        dom.mutV2Hex.textContent = formatMutationOpValueHex(dom.mutV2.value);
+    }
 }
 
 function renderFrameDataBytes(dataString, changedMask) {
@@ -453,7 +504,8 @@ function renderRawBitEditor() {
         : 0;
 
     let html = "";
-    html += `<div class="raw-bit-row-label">Byte ${selectedByte} (bits ${(selectedByte * 8) + 7}..${selectedByte * 8})</div>`;
+    html += `<div class="raw-bit-row-label"><span>Byte ${selectedByte} (bits ${(selectedByte * 8) + 7}..${selectedByte * 8})</span>`
+        + `<span class="raw-bit-override-legend">P pass · F0/F1 force · <span class="raw-bit-override-hint-touch">long-press</span><span class="raw-bit-override-hint-desktop">right-click</span></span></div>`;
     for (let bit = 7; bit >= 0; bit -= 1) {
         const bitIndex = (selectedByte * 8) + bit;
         const bitValue = ((bytes[selectedByte] >> bit) & 0x01) === 1;
@@ -484,6 +536,7 @@ function renderRawBitEditor() {
 
     dom.rawBitGrid.innerHTML = html;
     syncReplaceValueFromBitEditor(bytes);
+    updateMutationOpValueHexLabels();
 }
 
 function cycleRawOverrideMode(bitIndex) {
@@ -888,6 +941,7 @@ function updateOperationControls() {
     const operation = dom.mutOperation ? dom.mutOperation.value : "PASS_THROUGH";
 
     if (!dom.opParam1Group || !dom.opParam2Group || !dom.opParam1Label || !dom.opParam2Label) {
+        updateMutationOpValueHexLabels();
         return;
     }
 
@@ -923,6 +977,8 @@ function updateOperationControls() {
     default:
         break;
     }
+
+    updateMutationOpValueHexLabels();
 }
 
 async function postJson(url, payload) {
@@ -1203,6 +1259,16 @@ async function refreshStatus() {
         }
     } catch (_error) {
         setOffline();
+        latestIncomingFrames = [offlineDemoCanFrame];
+        if (!framesPaused) {
+            renderFrames(latestIncomingFrames);
+            const selectedFrame = findSelectedFrame(displayedFrames);
+            if (selectedFrame) {
+                refreshSignalPicker(selectedFrame, true, { preserveEditor: true });
+            } else if (dom.signalPicker) {
+                setSignalPickerDisabled("Select a frame with decoded DBC signals", { preserveEditor: true });
+            }
+        }
     }
 }
 
@@ -1527,6 +1593,13 @@ if (dom.mutOperation) {
     });
 }
 
+[dom.mutV1, dom.mutV2].forEach((element) => {
+    if (element) {
+        element.addEventListener("input", updateMutationOpValueHexLabels);
+        element.addEventListener("change", updateMutationOpValueHexLabels);
+    }
+});
+
 [dom.mutStartBit, dom.mutLength, dom.mutEndian, dom.mutSigned, dom.mutFactor, dom.mutOffset]
     .forEach((el) => {
         if (el) {
@@ -1536,6 +1609,7 @@ if (dom.mutOperation) {
     });
 
 updateOperationControls();
+updateMutationOpValueHexLabels();
 enforceRawOnlyOperationMode();
 updatePauseUi();
 setSignalPickerDisabled("Select a frame with decoded DBC signals");

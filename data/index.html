@@ -134,281 +134,279 @@
                         </div>
                     </div>
 
-                    <div class="row g-3 mb-3" id="live-frames">
-    <div class="col-12">
-        <div class="card h-100">
-            <div class="card-body">
-                <div class="d-flex align-items-center justify-content-between mb-2">
-                    <h4 class="header-title mb-0">Live Frames</h4>
-                    <button class="btn btn-sm btn-outline-secondary" id="frame-pause">Pause</button>
-                </div>
-                <p class="text-muted mb-3">Bidirectional gateway traffic view (A_TO_B and B_TO_A).</p>
-                <div class="row g-2 align-items-end mb-3">
-                    <div class="col-md-9">
-                        <label class="form-label mb-1">Live Filter</label>
-                        <input
-                            type="text"
-                            class="form-control form-control-sm"
-                            id="frame-filter-input"
-                            placeholder="CSV: 0x123, 0x456, a_to_b"
-                            autocomplete="off"
-                        />
-                        <div class="form-text">
-                            IDs + optional direction token (`a_to_b` or `b_to_a`), comma separated.
+                    <div class="row g-3 mb-3 align-items-stretch signalscope-main-layout">
+                        <div class="col-12 col-xl-5" id="live-frames">
+                            <div class="card h-100">
+                                <div class="card-body">
+                                    <h4 class="header-title mb-2">Live Frames</h4>
+                                    <div class="d-flex align-items-end justify-content-between gap-2 mb-3">
+                                        <p class="text-muted mb-0 flex-grow-1 min-w-0">Bidirectional gateway traffic view (A_TO_B and B_TO_A).</p>
+                                        <button type="button" class="btn btn-sm btn-outline-secondary flex-shrink-0 text-nowrap" id="frame-pause">Pause</button>
+                                    </div>
+                                    <div class="row g-2 align-items-end mb-3">
+                                        <div class="col-12">
+                                            <label class="form-label mb-1" for="frame-filter-input">Live Filter</label>
+                                            <div class="input-group input-group-sm frame-filter-input-group">
+                                                <input
+                                                    type="text"
+                                                    class="form-control"
+                                                    id="frame-filter-input"
+                                                    placeholder="CSV: 0x123, 0x456, a_to_b"
+                                                    autocomplete="off"
+                                                />
+                                                <button
+                                                    type="button"
+                                                    class="btn btn-outline-secondary frame-filter-clear-btn"
+                                                    id="frame-filter-clear"
+                                                    aria-label="Clear filter"
+                                                    title="Clear filter"
+                                                >×</button>
+                                            </div>
+                                            <div class="form-text">
+                                                IDs + optional direction token (`a_to_b` or `b_to_a`), comma separated.
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="small text-muted mb-2" id="frame-filter-summary">Showing all frames</div>
+                                    <div class="table-responsive">
+                                        <table class="table table-centered table-hover align-middle mb-0">
+                                            <thead>
+                                                <tr>
+                                                    <th>ID</th>
+                                                    <th>DLC</th>
+                                                    <th>Direction</th>
+                                                    <th>Data</th>
+                                                    <th>Period</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="frame-table">
+                                                <tr><td colspan="5" class="text-muted">Waiting for CAN frames...</td></tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-12 col-xl-7">
+                            <div class="d-flex flex-column gap-3 signalscope-tools-column">
+                                <div class="card" id="mutation-panel">
+                                    <div class="card-body">
+                                        <h4 class="header-title mb-2">Mutation Editor</h4>
+
+                                        <div class="row g-2">
+                                            <div class="col-md-3">
+                                                <label class="form-label">CAN ID</label>
+                                                <input type="text" class="form-control" id="mut-can-id" placeholder="0x123" />
+                                            </div>
+                                            <div class="col-md-3">
+                                                <label class="form-label">Direction</label>
+                                                <select class="form-select" id="mut-direction">
+                                                    <option value="A_TO_B">A_TO_B</option>
+                                                    <option value="B_TO_A">B_TO_A</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <label class="form-label">Signal Picker</label>
+                                                <select class="form-select" id="mut-signal-picker" disabled>
+                                                    <option value="">Select a frame with decoded DBC signals</option>
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        <div class="row g-2 mt-1">
+                                            <div class="col-md-2">
+                                                <label class="form-label">Start Bit</label>
+                                                <input type="number" class="form-control" id="mut-start-bit" value="0" min="0" max="63" />
+                                            </div>
+                                            <div class="col-md-2">
+                                                <label class="form-label">Length</label>
+                                                <input type="number" class="form-control" id="mut-length" value="8" min="1" max="64" />
+                                            </div>
+                                            <div class="col-md-2">
+                                                <label class="form-label">Endian</label>
+                                                <select class="form-select" id="mut-endian">
+                                                    <option value="little">Little</option>
+                                                    <option value="big">Big</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-md-2">
+                                                <label class="form-label">Signed</label>
+                                                <select class="form-select" id="mut-signed">
+                                                    <option value="false">Unsigned</option>
+                                                    <option value="true">Signed</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-md-2">
+                                                <label class="form-label">Factor</label>
+                                                <input type="number" class="form-control" id="mut-factor" value="1" step="any" />
+                                            </div>
+                                            <div class="col-md-2">
+                                                <label class="form-label">Offset</label>
+                                                <input type="number" class="form-control" id="mut-offset" value="0" step="any" />
+                                            </div>
+                                        </div>
+
+                                        <div class="row g-2 mt-1 align-items-end">
+                                            <div class="col-md-3">
+                                                <label class="form-label">Operation</label>
+                                                <select class="form-select" id="mut-operation">
+                                                    <option value="PASS_THROUGH">Pass-through</option>
+                                                    <option value="REPLACE">Replace</option>
+                                                    <option value="ADD_OFFSET">Add offset</option>
+                                                    <option value="MULTIPLY">Multiply</option>
+                                                    <option value="CLAMP">Clamp</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-md-3" id="op-param1-group" style="display:none;">
+                                                <label class="form-label" id="op-param1-label">Value</label>
+                                                <div class="d-flex align-items-center gap-2 flex-nowrap">
+                                                    <input type="number" class="form-control flex-grow-1" id="mut-v1" value="0" step="any" />
+                                                    <span class="small text-muted text-nowrap font-monospace user-select-none" id="mut-v1-hex" title="Integer value as hex">0x0</span>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3" id="op-param2-group" style="display:none;">
+                                                <label class="form-label" id="op-param2-label">Value 2</label>
+                                                <div class="d-flex align-items-center gap-2 flex-nowrap">
+                                                    <input type="number" class="form-control flex-grow-1" id="mut-v2" value="0" step="any" />
+                                                    <span class="small text-muted text-nowrap font-monospace user-select-none" id="mut-v2-hex" title="Integer value as hex">0x0</span>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <label class="form-label d-block">Enabled</label>
+                                                <div class="form-check form-switch mt-2">
+                                                    <input class="form-check-input" type="checkbox" role="switch" id="mut-enabled" />
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div class="mt-3 d-flex gap-2 flex-wrap">
+                                            <button class="btn btn-primary" id="apply-btn">Stage + Apply</button>
+                                            <button class="btn btn-outline-secondary" id="revert-btn">Revert</button>
+                                            <button class="btn btn-outline-danger" id="clear-staging-btn">Clear All Mutations</button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="card">
+                                    <div class="card-body">
+                                        <h4 class="header-title mb-2">Raw Frame + Bit Editor</h4>
+                                        <p class="text-muted mb-2 small">
+                                            Edit bytes directly. Click a bit to target/select the matching signal in Mutation Editor.
+                                        </p>
+                                        <div id="raw-editor" class="raw-byte-editor">
+                                            <div class="raw-byte-inputs-row">
+                                                <div class="raw-byte-input-cell">
+                                                    <label class="form-label small text-muted mb-1">Byte 0</label>
+                                                    <input type="text" class="form-control form-control-sm raw-byte-input" id="raw-byte-0" data-byte-index="0" />
+                                                </div>
+                                                <div class="raw-byte-input-cell">
+                                                    <label class="form-label small text-muted mb-1">Byte 1</label>
+                                                    <input type="text" class="form-control form-control-sm raw-byte-input" id="raw-byte-1" data-byte-index="1" />
+                                                </div>
+                                                <div class="raw-byte-input-cell">
+                                                    <label class="form-label small text-muted mb-1">Byte 2</label>
+                                                    <input type="text" class="form-control form-control-sm raw-byte-input" id="raw-byte-2" data-byte-index="2" />
+                                                </div>
+                                                <div class="raw-byte-input-cell">
+                                                    <label class="form-label small text-muted mb-1">Byte 3</label>
+                                                    <input type="text" class="form-control form-control-sm raw-byte-input" id="raw-byte-3" data-byte-index="3" />
+                                                </div>
+                                                <div class="raw-byte-input-cell">
+                                                    <label class="form-label small text-muted mb-1">Byte 4</label>
+                                                    <input type="text" class="form-control form-control-sm raw-byte-input" id="raw-byte-4" data-byte-index="4" />
+                                                </div>
+                                                <div class="raw-byte-input-cell">
+                                                    <label class="form-label small text-muted mb-1">Byte 5</label>
+                                                    <input type="text" class="form-control form-control-sm raw-byte-input" id="raw-byte-5" data-byte-index="5" />
+                                                </div>
+                                                <div class="raw-byte-input-cell">
+                                                    <label class="form-label small text-muted mb-1">Byte 6</label>
+                                                    <input type="text" class="form-control form-control-sm raw-byte-input" id="raw-byte-6" data-byte-index="6" />
+                                                </div>
+                                                <div class="raw-byte-input-cell">
+                                                    <label class="form-label small text-muted mb-1">Byte 7</label>
+                                                    <input type="text" class="form-control form-control-sm raw-byte-input" id="raw-byte-7" data-byte-index="7" />
+                                                </div>
+                                            </div>
+                                            <div id="raw-bit-grid" class="raw-bit-grid" aria-label="Raw bit grid"></div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="card" id="active-mutations-panel">
+                                    <div class="card-body">
+                                        <h4 class="header-title mb-2">Active Mutations</h4>
+                                        <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+                                            <span class="small text-muted mb-0">All mutations</span>
+                                            <div class="d-flex flex-wrap gap-1 mutation-master-actions" aria-label="Apply mode to all mutations">
+                                                <button type="button" class="btn btn-sm btn-outline-secondary" id="active-mutations-master-off" data-mutation-mode="disabled" title="Set all mutations to Off">Off</button>
+                                                <button type="button" class="btn btn-sm btn-outline-secondary" id="active-mutations-master-on" data-mutation-mode="enabled" title="Set all mutations to On">On</button>
+                                                <button type="button" class="btn btn-sm btn-outline-secondary" id="active-mutations-master-once" data-mutation-mode="single_shot" title="Set all mutations to Once">Once</button>
+                                            </div>
+                                        </div>
+                                        <div id="active-mutation-list" class="list-group list-group-flush">
+                                            <div class="text-muted small">No active mutations</div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="card" id="resource-panel">
+                                    <div class="card-body">
+                                        <h4 class="header-title mb-2">Resource Monitor</h4>
+                                        <ul class="list-group list-group-flush">
+                                            <li class="list-group-item d-flex justify-content-between"><span>CPU</span><strong id="cpu-load">-</strong></li>
+                                            <li class="list-group-item d-flex justify-content-between"><span>Bus A</span><strong id="bus-a">-</strong></li>
+                                            <li class="list-group-item d-flex justify-content-between"><span>Bus B</span><strong id="bus-b">-</strong></li>
+                                            <li class="list-group-item d-flex justify-content-between"><span>RX Queue</span><strong id="rx-depth">-</strong></li>
+                                            <li class="list-group-item d-flex justify-content-between"><span>Dropped (queue)</span><strong id="dropped">-</strong></li>
+                                            <li class="list-group-item d-flex justify-content-between"><span>Mutations</span><strong id="mutation-count">0 active</strong></li>
+                                            <li class="list-group-item d-flex justify-content-between"><span>Direct path</span><strong id="direct-path-avg">-</strong></li>
+                                            <li class="list-group-item d-flex justify-content-between"><span>Observed/mutated path</span><strong id="mutated-path-avg">-</strong></li>
+                                        </ul>
+                                    </div>
+                                </div>
+
+                                <div class="card" id="dbc-panel">
+                                    <div class="card-body">
+                                        <h4 class="header-title mb-2">DBC Runtime</h4>
+                                        <div class="d-flex align-items-stretch gap-2 mb-3">
+                                            <div class="alert alert-info py-2 mb-0 flex-grow-1" id="dbc-status">No DBC loaded</div>
+                                            <button type="button" class="btn btn-outline-danger" id="dbc-unload" hidden>Unload DBC</button>
+                                        </div>
+                                        <div class="row g-2">
+                                            <div class="col-md-8">
+                                                <input type="file" class="form-control" id="dbc-file" accept=".dbc,.txt" />
+                                            </div>
+                                            <div class="col-md-4 d-grid">
+                                                <button class="btn btn-primary" id="dbc-upload">Upload DBC</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="card" id="replay-panel">
+                                    <div class="card-body">
+                                        <h4 class="header-title mb-2">Replay</h4>
+                                        <input type="file" class="form-control mb-2" id="replay-file" accept=".csv,.log,.txt" />
+                                        <select class="form-select mb-2" id="replay-direction">
+                                            <option value="A_TO_B">Replay A_TO_B</option>
+                                            <option value="B_TO_A">Replay B_TO_A</option>
+                                        </select>
+                                        <select class="form-select mb-2" id="replay-loop">
+                                            <option value="PLAY_ONCE">Play Once</option>
+                                            <option value="LOOP_RAW">Loop Raw</option>
+                                            <option value="LOOP_WITH_COUNTER_CONTINUATION">Loop + Counter</option>
+                                        </select>
+                                        <div class="d-grid gap-2">
+                                            <button class="btn btn-primary" id="replay-play">Load + Play</button>
+                                            <button class="btn btn-outline-danger" id="replay-stop">Stop</button>
+                                        </div>
+                                        <p id="replay-status" class="mt-3 mb-0 text-muted">Idle</p>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
-                    <div class="col-md-3">
-                        <button class="btn btn-sm btn-outline-secondary w-100" id="frame-filter-clear">Clear Filter</button>
-                    </div>
-                </div>
-                <div class="small text-muted mb-2" id="frame-filter-summary">Showing all frames</div>
-                <div class="table-responsive">
-                    <table class="table table-centered table-hover align-middle mb-0">
-                        <thead>
-                            <tr>
-                                <th>ID</th>
-                                <th>DLC</th>
-                                <th>Direction</th>
-                                <th>Data</th>
-                                <th>Period</th>
-                            </tr>
-                        </thead>
-                        <tbody id="frame-table">
-                            <tr><td colspan="5" class="text-muted">Waiting for CAN frames...</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<div class="row g-3 mb-3" id="mutation-panel">
-    <div class="col-xl-6">
-        <div class="card h-100">
-            <div class="card-body">
-                <h4 class="header-title mb-2">Mutation Editor</h4>
-
-                <div class="row g-2">
-                    <div class="col-md-3">
-                        <label class="form-label">CAN ID</label>
-                        <input type="text" class="form-control" id="mut-can-id" placeholder="0x123" />
-                    </div>
-                    <div class="col-md-3">
-                        <label class="form-label">Direction</label>
-                        <select class="form-select" id="mut-direction">
-                            <option value="A_TO_B">A_TO_B</option>
-                            <option value="B_TO_A">B_TO_A</option>
-                        </select>
-                    </div>
-                    <div class="col-md-6">
-                        <label class="form-label">Signal Picker</label>
-                        <select class="form-select" id="mut-signal-picker" disabled>
-                            <option value="">Select a frame with decoded DBC signals</option>
-                        </select>
-                    </div>
-                </div>
-
-                <div class="row g-2 mt-1">
-                    <div class="col-md-2">
-                        <label class="form-label">Start Bit</label>
-                        <input type="number" class="form-control" id="mut-start-bit" value="0" min="0" max="63" />
-                    </div>
-                    <div class="col-md-2">
-                        <label class="form-label">Length</label>
-                        <input type="number" class="form-control" id="mut-length" value="8" min="1" max="64" />
-                    </div>
-                    <div class="col-md-2">
-                        <label class="form-label">Endian</label>
-                        <select class="form-select" id="mut-endian">
-                            <option value="little">Little</option>
-                            <option value="big">Big</option>
-                        </select>
-                    </div>
-                    <div class="col-md-2">
-                        <label class="form-label">Signed</label>
-                        <select class="form-select" id="mut-signed">
-                            <option value="false">Unsigned</option>
-                            <option value="true">Signed</option>
-                        </select>
-                    </div>
-                    <div class="col-md-2">
-                        <label class="form-label">Factor</label>
-                        <input type="number" class="form-control" id="mut-factor" value="1" step="any" />
-                    </div>
-                    <div class="col-md-2">
-                        <label class="form-label">Offset</label>
-                        <input type="number" class="form-control" id="mut-offset" value="0" step="any" />
-                    </div>
-                </div>
-
-                <div class="row g-2 mt-1 align-items-end">
-                    <div class="col-md-3">
-                        <label class="form-label">Operation</label>
-                        <select class="form-select" id="mut-operation">
-                            <option value="PASS_THROUGH">Pass-through</option>
-                            <option value="REPLACE">Replace</option>
-                            <option value="ADD_OFFSET">Add offset</option>
-                            <option value="MULTIPLY">Multiply</option>
-                            <option value="CLAMP">Clamp</option>
-                        </select>
-                    </div>
-                    <div class="col-md-3" id="op-param1-group" style="display:none;">
-                        <label class="form-label" id="op-param1-label">Value</label>
-                        <input type="number" class="form-control" id="mut-v1" value="0" step="any" />
-                    </div>
-                    <div class="col-md-3" id="op-param2-group" style="display:none;">
-                        <label class="form-label" id="op-param2-label">Value 2</label>
-                        <input type="number" class="form-control" id="mut-v2" value="0" step="any" />
-                    </div>
-                    <div class="col-md-3">
-                        <label class="form-label d-block">Enabled</label>
-                        <div class="form-check form-switch mt-2">
-                            <input class="form-check-input" type="checkbox" role="switch" id="mut-enabled" />
-                        </div>
-                    </div>
-                </div>
-
-                <div class="mt-3 d-flex gap-2 flex-wrap">
-                    <button class="btn btn-primary" id="apply-btn">Stage + Apply</button>
-                    <button class="btn btn-outline-secondary" id="revert-btn">Revert</button>
-                    <button class="btn btn-outline-danger" id="clear-staging-btn">Clear All Mutations</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="col-xl-6">
-        <div class="card h-100">
-            <div class="card-body">
-                <h4 class="header-title mb-2">Raw Frame + Bit Editor</h4>
-                <p class="text-muted mb-2 small">
-                    Edit bytes directly. Click a bit to target/select the matching signal in Mutation Editor.
-                </p>
-                <div id="raw-editor" class="raw-byte-editor">
-                    <div class="row g-2 mb-2">
-                        <div class="col-6 col-md-3">
-                            <label class="form-label small text-muted mb-1">Byte 0</label>
-                            <input type="text" class="form-control form-control-sm raw-byte-input" id="raw-byte-0" data-byte-index="0" />
-                        </div>
-                        <div class="col-6 col-md-3">
-                            <label class="form-label small text-muted mb-1">Byte 1</label>
-                            <input type="text" class="form-control form-control-sm raw-byte-input" id="raw-byte-1" data-byte-index="1" />
-                        </div>
-                        <div class="col-6 col-md-3">
-                            <label class="form-label small text-muted mb-1">Byte 2</label>
-                            <input type="text" class="form-control form-control-sm raw-byte-input" id="raw-byte-2" data-byte-index="2" />
-                        </div>
-                        <div class="col-6 col-md-3">
-                            <label class="form-label small text-muted mb-1">Byte 3</label>
-                            <input type="text" class="form-control form-control-sm raw-byte-input" id="raw-byte-3" data-byte-index="3" />
-                        </div>
-                        <div class="col-6 col-md-3">
-                            <label class="form-label small text-muted mb-1">Byte 4</label>
-                            <input type="text" class="form-control form-control-sm raw-byte-input" id="raw-byte-4" data-byte-index="4" />
-                        </div>
-                        <div class="col-6 col-md-3">
-                            <label class="form-label small text-muted mb-1">Byte 5</label>
-                            <input type="text" class="form-control form-control-sm raw-byte-input" id="raw-byte-5" data-byte-index="5" />
-                        </div>
-                        <div class="col-6 col-md-3">
-                            <label class="form-label small text-muted mb-1">Byte 6</label>
-                            <input type="text" class="form-control form-control-sm raw-byte-input" id="raw-byte-6" data-byte-index="6" />
-                        </div>
-                        <div class="col-6 col-md-3">
-                            <label class="form-label small text-muted mb-1">Byte 7</label>
-                            <input type="text" class="form-control form-control-sm raw-byte-input" id="raw-byte-7" data-byte-index="7" />
-                        </div>
-                    </div>
-                    <div id="raw-bit-grid" class="raw-bit-grid" aria-label="Raw bit grid"></div>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<div class="row g-3 mb-3">
-    <div class="col-xl-6" id="active-mutations-panel">
-        <div class="card h-100">
-            <div class="card-body">
-                <h4 class="header-title mb-2">Active Mutations</h4>
-                <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
-                    <span class="small text-muted mb-0">All mutations</span>
-                    <div class="d-flex flex-wrap gap-1 mutation-master-actions" aria-label="Apply mode to all mutations">
-                        <button type="button" class="btn btn-sm btn-outline-secondary" id="active-mutations-master-off" data-mutation-mode="disabled" title="Set all mutations to Off">Off</button>
-                        <button type="button" class="btn btn-sm btn-outline-secondary" id="active-mutations-master-on" data-mutation-mode="enabled" title="Set all mutations to On">On</button>
-                        <button type="button" class="btn btn-sm btn-outline-secondary" id="active-mutations-master-once" data-mutation-mode="single_shot" title="Set all mutations to Once">Once</button>
-                    </div>
-                </div>
-                <div id="active-mutation-list" class="list-group list-group-flush">
-                    <div class="text-muted small">No active mutations</div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="col-xl-6" id="resource-panel">
-        <div class="card h-100">
-            <div class="card-body">
-                <h4 class="header-title mb-2">Resource Monitor</h4>
-                <ul class="list-group list-group-flush">
-                    <li class="list-group-item d-flex justify-content-between"><span>CPU</span><strong id="cpu-load">-</strong></li>
-                    <li class="list-group-item d-flex justify-content-between"><span>Bus A</span><strong id="bus-a">-</strong></li>
-                    <li class="list-group-item d-flex justify-content-between"><span>Bus B</span><strong id="bus-b">-</strong></li>
-                    <li class="list-group-item d-flex justify-content-between"><span>RX Queue</span><strong id="rx-depth">-</strong></li>
-                    <li class="list-group-item d-flex justify-content-between"><span>Dropped (queue)</span><strong id="dropped">-</strong></li>
-                    <li class="list-group-item d-flex justify-content-between"><span>Mutations</span><strong id="mutation-count">0 active</strong></li>
-                    <li class="list-group-item d-flex justify-content-between"><span>Direct path</span><strong id="direct-path-avg">-</strong></li>
-                    <li class="list-group-item d-flex justify-content-between"><span>Observed/mutated path</span><strong id="mutated-path-avg">-</strong></li>
-                </ul>
-            </div>
-        </div>
-    </div>
-</div>
-
-<div class="row g-3 mb-3" id="dbc-panel">
-    <div class="col-xl-6">
-        <div class="card h-100">
-            <div class="card-body">
-                <h4 class="header-title mb-2">DBC Runtime</h4>
-                <div class="d-flex align-items-stretch gap-2 mb-3">
-                    <div class="alert alert-info py-2 mb-0 flex-grow-1" id="dbc-status">No DBC loaded</div>
-                    <button type="button" class="btn btn-outline-danger" id="dbc-unload" hidden>Unload DBC</button>
-                </div>
-                <div class="row g-2">
-                    <div class="col-md-8">
-                        <input type="file" class="form-control" id="dbc-file" accept=".dbc,.txt" />
-                    </div>
-                    <div class="col-md-4 d-grid">
-                        <button class="btn btn-primary" id="dbc-upload">Upload DBC</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="col-xl-6" id="replay-panel">
-        <div class="card h-100">
-            <div class="card-body">
-                <h4 class="header-title mb-2">Replay</h4>
-                <input type="file" class="form-control mb-2" id="replay-file" accept=".csv,.log,.txt" />
-                <select class="form-select mb-2" id="replay-direction">
-                    <option value="A_TO_B">Replay A_TO_B</option>
-                    <option value="B_TO_A">Replay B_TO_A</option>
-                </select>
-                <select class="form-select mb-2" id="replay-loop">
-                    <option value="PLAY_ONCE">Play Once</option>
-                    <option value="LOOP_RAW">Loop Raw</option>
-                    <option value="LOOP_WITH_COUNTER_CONTINUATION">Loop + Counter</option>
-                </select>
-                <div class="d-grid gap-2">
-                    <button class="btn btn-primary" id="replay-play">Load + Play</button>
-                    <button class="btn btn-outline-danger" id="replay-stop">Stop</button>
-                </div>
-                <p id="replay-status" class="mt-3 mb-0 text-muted">Idle</p>
-            </div>
-        </div>
-    </div>
                 </div>
             </div>
 
