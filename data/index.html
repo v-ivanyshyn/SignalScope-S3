@@ -271,18 +271,11 @@
                                                     <span class="small text-muted text-nowrap font-monospace user-select-none" id="mut-v2-hex" title="Integer value as hex">0x0</span>
                                                 </div>
                                             </div>
-                                            <div class="col-md-3">
-                                                <label class="form-label d-block">Enabled</label>
-                                                <div class="form-check form-switch mt-2">
-                                                    <input class="form-check-input" type="checkbox" role="switch" id="mut-enabled" />
-                                                </div>
-                                            </div>
                                         </div>
 
                                         <div class="mt-3 d-flex gap-2 flex-wrap">
-                                            <button class="btn btn-primary" id="apply-btn">Stage + Apply</button>
+                                            <button class="btn btn-primary" id="apply-btn">Stage Mutation</button>
                                             <button class="btn btn-outline-secondary" id="revert-btn">Revert</button>
-                                            <button class="btn btn-outline-danger" id="clear-staging-btn">Clear All Mutations</button>
                                         </div>
                                     </div>
                                 </div>
@@ -336,13 +329,16 @@
                                 <div class="card" id="active-mutations-panel">
                                     <div class="card-body">
                                         <h4 class="header-title mb-2">Active Mutations</h4>
-                                        <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
-                                            <span class="small text-muted mb-0">All mutations</span>
-                                            <div class="d-flex flex-wrap gap-1 mutation-master-actions" aria-label="Apply mode to all mutations">
-                                                <button type="button" class="btn btn-sm btn-outline-secondary" id="active-mutations-master-off" data-mutation-mode="disabled" title="Set all mutations to Off">Off</button>
-                                                <button type="button" class="btn btn-sm btn-outline-secondary" id="active-mutations-master-on" data-mutation-mode="enabled" title="Set all mutations to On">On</button>
-                                                <button type="button" class="btn btn-sm btn-outline-secondary" id="active-mutations-master-once" data-mutation-mode="single_shot" title="Set all mutations to Once">Once</button>
+                                        <div class="d-flex align-items-center justify-content-between gap-2 mb-2 flex-wrap">
+                                            <div class="d-flex align-items-center gap-2 flex-wrap min-w-0">
+                                                <span class="small text-muted mb-0">All mutations</span>
+                                                <div class="d-flex flex-wrap gap-1 mutation-master-actions" aria-label="Apply mode to all mutations">
+                                                    <button type="button" class="btn btn-sm btn-outline-secondary" id="active-mutations-master-off" data-mutation-mode="disabled" title="Set all mutations to Off">Off</button>
+                                                    <button type="button" class="btn btn-sm btn-outline-secondary" id="active-mutations-master-on" data-mutation-mode="enabled" title="Set all mutations to On">On</button>
+                                                    <button type="button" class="btn btn-sm btn-outline-secondary" id="active-mutations-master-once" data-mutation-mode="single_shot" title="Set all mutations to Once">Once</button>
+                                                </div>
                                             </div>
+                                            <button type="button" class="btn btn-sm btn-outline-danger flex-shrink-0" id="clear-staging-btn">Clear All</button>
                                         </div>
                                         <div id="active-mutation-list" class="list-group list-group-flush">
                                             <div class="text-muted small">No active mutations</div>

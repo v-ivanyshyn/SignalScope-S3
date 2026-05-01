@@ -51,7 +51,6 @@ const dom = {
     mutV1Hex: document.getElementById("mut-v1-hex"),
     mutV2: document.getElementById("mut-v2"),
     mutV2Hex: document.getElementById("mut-v2-hex"),
-    mutEnabled: document.getElementById("mut-enabled"),
 
     opParam1Group: document.getElementById("op-param1-group"),
     opParam1Label: document.getElementById("op-param1-label"),
@@ -593,8 +592,8 @@ function ensureRawOverrideButton() {
     const row = document.createElement("div");
     row.className = "mt-2 d-flex gap-2 flex-wrap";
     row.innerHTML = `
-        <button type="button" class="btn btn-sm btn-outline-primary" id="raw-override-apply">Apply Raw Override</button>
-        <button type="button" class="btn btn-sm btn-outline-secondary" id="raw-override-clear">Clear Raw Override</button>
+        <button type="button" class="btn btn-sm btn-outline-primary" id="raw-override-apply">Stage Per-bit Overrides</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="raw-override-clear">Clear Per-bit Overrides</button>
     `;
     dom.rawEditor.appendChild(row);
 
@@ -605,7 +604,7 @@ function ensureRawOverrideButton() {
         applyBtn.addEventListener("click", async () => {
             const payload = buildRawOverridePayload();
             if (!payload.hasAny) {
-                dom.replayStatus.textContent = "No raw override bits set";
+                dom.replayStatus.textContent = "No per-bit overrides set";
                 return;
             }
 
@@ -615,16 +614,18 @@ function ensureRawOverrideButton() {
             params.set("direction", dom.mutDirection.value || "A_TO_B");
             params.set("mask", payload.mask);
             params.set("value", payload.value);
-            params.set("enabled", "true");
+            params.set("enabled", "false");
 
             const stage = await postForm("/api/rules/stage", params);
             if (!stage.ok) {
-                dom.replayStatus.textContent = "Raw override stage failed";
+                dom.replayStatus.textContent = "Per-bit overrides stage failed";
                 return;
             }
 
             const commit = await postJson("/api/rules", { action: "apply_commit" });
-            dom.replayStatus.textContent = commit.ok ? "Raw override applied" : "Raw override commit failed";
+            dom.replayStatus.textContent = commit.ok
+                ? "Per-bit overrides committed"
+                : "Per-bit overrides commit failed";
             refreshStatus();
         });
     }
@@ -633,7 +634,7 @@ function ensureRawOverrideButton() {
         clearBtn.addEventListener("click", () => {
             rawOverrideModes = new Array(64).fill(-1);
             renderRawBitEditor();
-            dom.replayStatus.textContent = "Raw override cleared";
+            dom.replayStatus.textContent = "Per-bit overrides cleared";
         });
     }
 }
@@ -1042,7 +1043,7 @@ function mutationFormParams() {
     params.set("operation", forcedRawOperation ? "REPLACE" : (dom.mutOperation.value || "PASS_THROUGH"));
     params.set("op_value1", dom.mutV1.value || "0");
     params.set("op_value2", dom.mutV2.value || "0");
-    params.set("enabled", dom.mutEnabled.checked ? "true" : "false");
+    params.set("enabled", "false");
     return params;
 }
 
@@ -1398,7 +1399,9 @@ dom.applyBtn.addEventListener("click", async () => {
     }
 
     const apply = await postJson("/api/mutations", { action: "apply_commit" });
-    dom.replayStatus.textContent = apply.ok ? "Mutation applied" : "Mutation commit failed";
+    dom.replayStatus.textContent = apply.ok
+        ? "Mutation committed"
+        : "Mutation commit failed";
     refreshStatus();
 });
 
