@@ -1100,6 +1100,39 @@ async function postRuleMutationMode(item, mode) {
     return true;
 }
 
+async function postRemoveMutation(item) {
+    if (item && item.rule_id !== undefined && item.rule_id !== null) {
+        const byId = new URLSearchParams();
+        byId.set("rule_id", String(item.rule_id));
+        const direct = await postForm("/api/rules/remove", byId);
+        if (direct.ok) {
+            dom.replayStatus.textContent = "Mutation removed";
+            refreshStatus();
+            return true;
+        }
+    }
+
+    const params = new URLSearchParams();
+    params.set("can_id", item.can_id);
+    params.set("direction", item.direction);
+    if (item.kind === "RAW_MASK") {
+        params.set("kind", "RAW_MASK");
+    } else {
+        params.set("start_bit", String(item.start_bit));
+        params.set("length", String(item.length));
+    }
+
+    const fallback = await postForm("/api/mutations/remove", params);
+    if (!fallback.ok) {
+        dom.replayStatus.textContent = "Mutation remove failed";
+        return false;
+    }
+
+    dom.replayStatus.textContent = "Mutation removed";
+    refreshStatus();
+    return true;
+}
+
 async function postAllMutationModes(mode) {
     const params = new URLSearchParams();
     params.set("mode", mode);
@@ -1179,8 +1212,35 @@ function renderActiveMutations(items) {
             modeSwitch.appendChild(tabButton);
         });
 
+        const rightActions = document.createElement("div");
+        rightActions.className = "d-flex align-items-center gap-2 flex-shrink-0 flex-wrap";
+        rightActions.appendChild(modeSwitch);
+
+        const removeButton = document.createElement("button");
+        removeButton.type = "button";
+        removeButton.className = "btn btn-sm btn-outline-danger flex-shrink-0";
+        removeButton.textContent = "Remove";
+        removeButton.title = "Remove this mutation";
+        removeButton.addEventListener("click", async () => {
+            if (removeButton.disabled) {
+                return;
+            }
+            removeButton.disabled = true;
+            modeSwitch.querySelectorAll("button").forEach((button) => {
+                button.disabled = true;
+            });
+            const ok = await postRemoveMutation(item);
+            if (!ok) {
+                removeButton.disabled = false;
+                modeSwitch.querySelectorAll("button").forEach((button) => {
+                    button.disabled = false;
+                });
+            }
+        });
+        rightActions.appendChild(removeButton);
+
         row.appendChild(left);
-        row.appendChild(modeSwitch);
+        row.appendChild(rightActions);
         dom.activeMutationList.appendChild(row);
     });
 }

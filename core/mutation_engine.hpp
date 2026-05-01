@@ -77,6 +77,7 @@ public:
     bool setRuleMode(uint16_t rule_id, MutationRuntimeMode mode);
     void setAllRulesMode(MutationRuntimeMode mode);
 
+    bool removeRule(uint16_t rule_id);
     void clearRules();
     size_t listRules(RuleListEntry* out_entries, size_t capacity) const;
 

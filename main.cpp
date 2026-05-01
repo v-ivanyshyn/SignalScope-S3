@@ -423,6 +423,7 @@ void handleRuleValue();
 void handleRuleEnable();
 void handleRuleMode();
 void handleRuleModeAll();
+void handleRuleRemove();
 void handleReplayLoad();
 void handleReplayControl();
 void handleDbcUpload();
@@ -613,12 +614,14 @@ void configureHttpServer() {
     server.on("/api/rules/enable", HTTP_POST, handleRuleEnable);
     server.on("/api/rules/mode", HTTP_POST, handleRuleMode);
     server.on("/api/rules/mode_all", HTTP_POST, handleRuleModeAll);
+    server.on("/api/rules/remove", HTTP_POST, handleRuleRemove);
 
     // Backward-compatible paths
     server.on("/api/mutations/stage", HTTP_POST, handleRuleStage);
     server.on("/api/mutations", HTTP_POST, handleRulesAction);
     server.on("/api/mutations/mode", HTTP_POST, handleRuleMode);
     server.on("/api/mutations/mode_all", HTTP_POST, handleRuleModeAll);
+    server.on("/api/mutations/remove", HTTP_POST, handleRuleRemove);
     server.on("/api/mutations/toggle", HTTP_POST, []() {
         const bool enabled = parseBoolText(server.arg("enabled"), true);
 
@@ -1039,6 +1042,34 @@ void handleRuleModeAll() {
 
     mutation_engine.setAllRulesMode(mode);
     server.send(200, "application/json", "{\"ok\":true}");
+}
+
+void handleRuleRemove() {
+    int32_t rule_id = parseIntArg("rule_id", -1);
+    if (rule_id < 0 || rule_id >= static_cast<int32_t>(MutationEngine::kMaxRules)) {
+        const uint32_t can_id = parseUIntArg("can_id", 0U);
+        const Direction direction = parseDirectionFromText(server.arg("direction"), Direction::A_TO_B);
+        const bool is_raw = server.hasArg("kind") && server.arg("kind") == "RAW_MASK";
+        uint16_t resolved_rule_id = 0U;
+
+        bool found = false;
+        if (is_raw) {
+            found = findRuleIdByRawIdentity(can_id, direction, resolved_rule_id);
+        } else if (server.hasArg("start_bit") && server.hasArg("length")) {
+            const uint16_t start_bit = static_cast<uint16_t>(parseUIntArg("start_bit", 0U));
+            const uint8_t bit_length = static_cast<uint8_t>(parseUIntArg("length", 0U));
+            found = findRuleIdByIdentity(can_id, direction, start_bit, bit_length, resolved_rule_id);
+        }
+
+        if (!found) {
+            server.send(400, "application/json", "{\"ok\":false,\"error\":\"invalid_rule_id\"}");
+            return;
+        }
+        rule_id = static_cast<int32_t>(resolved_rule_id);
+    }
+
+    const bool ok = mutation_engine.removeRule(static_cast<uint16_t>(rule_id));
+    server.send(ok ? 200 : 404, "application/json", ok ? "{\"ok\":true}" : "{\"ok\":false,\"error\":\"rule_not_found\"}");
 }
 
 void handleReplayLoad() {

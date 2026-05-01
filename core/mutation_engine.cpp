@@ -427,6 +427,28 @@ void MutationEngine::setAllRulesMode(MutationRuntimeMode mode) {
     }
 }
 
+bool MutationEngine::removeRule(uint16_t rule_id) {
+    if (rule_id >= kMaxRules) {
+        return false;
+    }
+
+    // Reset staging to the committed snapshot first so this operation does
+    // not silently commit unrelated in-progress edits the caller may have
+    // staged but not applied yet.
+    revertStagingToActive();
+
+    if (!staged_[rule_id].in_use) {
+        return false;
+    }
+
+    resetRuleSlot(rule_id);
+    if (staged_count_ > 0U) {
+        --staged_count_;
+    }
+
+    return applyCommit();
+}
+
 void MutationEngine::clearRules() {
     clearStaging();
     for (uint16_t i = 0; i < kMaxRules; ++i) {
