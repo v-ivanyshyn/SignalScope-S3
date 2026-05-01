@@ -108,6 +108,37 @@ const char* ruleKindToString(RuleKind kind) {
     return (kind == RuleKind::RAW_MASK) ? "RAW_MASK" : "BIT_RANGE";
 }
 
+const char* mutationRuntimeModeToJsonString(MutationRuntimeMode mode) {
+    switch (mode) {
+    case MutationRuntimeMode::Enabled:
+        return "enabled";
+    case MutationRuntimeMode::SingleShot:
+        return "single_shot";
+    case MutationRuntimeMode::Disabled:
+    default:
+        return "disabled";
+    }
+}
+
+bool parseMutationRuntimeMode(const String& text, MutationRuntimeMode* out_mode) {
+    if (out_mode == nullptr) {
+        return false;
+    }
+    if (text == "disabled" || text == "0") {
+        *out_mode = MutationRuntimeMode::Disabled;
+        return true;
+    }
+    if (text == "enabled" || text == "1") {
+        *out_mode = MutationRuntimeMode::Enabled;
+        return true;
+    }
+    if (text == "single_shot" || text == "once" || text == "2") {
+        *out_mode = MutationRuntimeMode::SingleShot;
+        return true;
+    }
+    return false;
+}
+
 bool parseBoolText(const String& text, bool fallback) {
     if (text == "1" || text == "true" || text == "TRUE" || text == "on") return true;
     if (text == "0" || text == "false" || text == "FALSE" || text == "off") return false;
@@ -390,6 +421,8 @@ void handleRulesAction();
 void handleRulesList();
 void handleRuleValue();
 void handleRuleEnable();
+void handleRuleMode();
+void handleRuleModeAll();
 void handleReplayLoad();
 void handleReplayControl();
 void handleDbcUpload();
@@ -578,10 +611,14 @@ void configureHttpServer() {
     server.on("/api/rules", HTTP_GET, handleRulesList);
     server.on("/api/rules/value", HTTP_POST, handleRuleValue);
     server.on("/api/rules/enable", HTTP_POST, handleRuleEnable);
+    server.on("/api/rules/mode", HTTP_POST, handleRuleMode);
+    server.on("/api/rules/mode_all", HTTP_POST, handleRuleModeAll);
 
     // Backward-compatible paths
     server.on("/api/mutations/stage", HTTP_POST, handleRuleStage);
     server.on("/api/mutations", HTTP_POST, handleRulesAction);
+    server.on("/api/mutations/mode", HTTP_POST, handleRuleMode);
+    server.on("/api/mutations/mode_all", HTTP_POST, handleRuleModeAll);
     server.on("/api/mutations/toggle", HTTP_POST, []() {
         const bool enabled = parseBoolText(server.arg("enabled"), true);
 
@@ -905,6 +942,7 @@ void handleRulesList() {
         json += "\"length\":" + String(item.request.bit_length) + ",";
         json += "\"dynamic\":" + String(item.request.dynamic_value ? "true" : "false") + ",";
         json += "\"replace_value\":" + String(static_cast<uint32_t>(item.request.replace_value));
+        json += ",\"mode\":\"" + String(mutationRuntimeModeToJsonString(item.mode)) + "\"";
         json += "}";
     }
     json += "]}";
@@ -956,6 +994,51 @@ void handleRuleEnable() {
     }
     const bool ok = mutation_engine.enableRule(static_cast<uint16_t>(rule_id), parseBoolText(server.arg("enabled"), true));
     server.send(ok ? 200 : 404, "application/json", ok ? "{\"ok\":true}" : "{\"ok\":false,\"error\":\"rule_not_found\"}");
+}
+
+void handleRuleMode() {
+    MutationRuntimeMode mode{};
+    if (!parseMutationRuntimeMode(server.arg("mode"), &mode)) {
+        server.send(400, "application/json", "{\"ok\":false,\"error\":\"invalid_mode\"}");
+        return;
+    }
+
+    int32_t rule_id = parseIntArg("rule_id", -1);
+    if (rule_id < 0 || rule_id >= static_cast<int32_t>(MutationEngine::kMaxRules)) {
+        const uint32_t can_id = parseUIntArg("can_id", 0U);
+        const Direction direction = parseDirectionFromText(server.arg("direction"), Direction::A_TO_B);
+        const bool is_raw = server.hasArg("kind") && server.arg("kind") == "RAW_MASK";
+        uint16_t resolved_rule_id = 0U;
+
+        bool found = false;
+        if (is_raw) {
+            found = findRuleIdByRawIdentity(can_id, direction, resolved_rule_id);
+        } else if (server.hasArg("start_bit") && server.hasArg("length")) {
+            const uint16_t start_bit = static_cast<uint16_t>(parseUIntArg("start_bit", 0U));
+            const uint8_t bit_length = static_cast<uint8_t>(parseUIntArg("length", 0U));
+            found = findRuleIdByIdentity(can_id, direction, start_bit, bit_length, resolved_rule_id);
+        }
+
+        if (!found) {
+            server.send(400, "application/json", "{\"ok\":false,\"error\":\"invalid_rule_id\"}");
+            return;
+        }
+        rule_id = static_cast<int32_t>(resolved_rule_id);
+    }
+
+    const bool ok = mutation_engine.setRuleMode(static_cast<uint16_t>(rule_id), mode);
+    server.send(ok ? 200 : 404, "application/json", ok ? "{\"ok\":true}" : "{\"ok\":false,\"error\":\"rule_not_found\"}");
+}
+
+void handleRuleModeAll() {
+    MutationRuntimeMode mode{};
+    if (!parseMutationRuntimeMode(server.arg("mode"), &mode)) {
+        server.send(400, "application/json", "{\"ok\":false,\"error\":\"invalid_mode\"}");
+        return;
+    }
+
+    mutation_engine.setAllRulesMode(mode);
+    server.send(200, "application/json", "{\"ok\":true}");
 }
 
 void handleReplayLoad() {
@@ -1212,6 +1295,7 @@ void appendActiveRulesJson(String& json) {
         json += "\"can_id\":\"" + String(can_id_text) + "\",";
         json += "\"direction\":\"" + String(directionToString(item.request.direction)) + "\",";
         json += "\"enabled\":" + String(item.active ? "true" : "false") + ",";
+        json += "\"mode\":\"" + String(mutationRuntimeModeToJsonString(item.mode)) + "\",";
         json += "\"dynamic\":" + String(item.request.dynamic_value ? "true" : "false") + ",";
         json += "\"start_bit\":" + String(item.request.start_bit) + ",";
         json += "\"length\":" + String(item.request.bit_length) + ",";
@@ -1250,6 +1334,24 @@ void appendActiveRulesJson(String& json) {
         json += "}";
     }
     json += "]";
+    json += ",\"mutation_mode_aggregate\":";
+    if (count == 0U) {
+        json += "\"disabled\"";
+    } else {
+        const MutationRuntimeMode first_mode = rules[0].mode;
+        bool mixed = false;
+        for (size_t i = 1U; i < count; ++i) {
+            if (rules[i].mode != first_mode) {
+                mixed = true;
+                break;
+            }
+        }
+        if (mixed) {
+            json += "\"mixed\"";
+        } else {
+            json += "\"" + String(mutationRuntimeModeToJsonString(first_mode)) + "\"";
+        }
+    }
 }
 
 void handleStatus() {

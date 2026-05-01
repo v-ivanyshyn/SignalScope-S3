@@ -8,6 +8,12 @@
 
 namespace bored::signalscope {
 
+enum class MutationRuntimeMode : uint8_t {
+    Disabled = 0,
+    Enabled = 1,
+    SingleShot = 2,
+};
+
 enum class RuleKind : uint8_t {
     BIT_RANGE = 0,
     RAW_MASK = 1,
@@ -36,6 +42,7 @@ struct RuleListEntry {
     uint16_t priority = 0;
     RuleStageRequest request{};
     bool active = false;
+    MutationRuntimeMode mode = MutationRuntimeMode::Disabled;
 };
 
 class MutationEngine {
@@ -54,7 +61,7 @@ public:
     size_t activeCount() const;
 
     bool hasRulesForFrame(uint32_t can_id, Direction direction) const;
-    size_t applyFrameMutations(CanFrame& frame) const;
+    size_t applyFrameMutations(CanFrame& frame);
 
     int32_t registerDynamicSignalRule(
         uint32_t can_id,
@@ -67,6 +74,8 @@ public:
 
     bool setRuleValue(uint16_t rule_id, uint32_t value);
     bool enableRule(uint16_t rule_id, bool enabled);
+    bool setRuleMode(uint16_t rule_id, MutationRuntimeMode mode);
+    void setAllRulesMode(MutationRuntimeMode mode);
 
     void clearRules();
     size_t listRules(RuleListEntry* out_entries, size_t capacity) const;
@@ -77,7 +86,7 @@ private:
 
     struct RuntimeRuleState {
         alignas(4) std::atomic<uint32_t> current_value{0};
-        std::atomic<uint8_t> enabled{0};
+        std::atomic<uint8_t> mode{static_cast<uint8_t>(MutationRuntimeMode::Disabled)};
     };
 
     struct StagedRule {
@@ -150,6 +159,7 @@ private:
     uint16_t allocateRuleSlot();
     uint16_t allocateSequence();
     void resetRuleSlot(uint16_t rule_id);
+    void syncStagedRequestEnabled(uint16_t rule_id, bool continuous_enabled);
 
     StagedRule staged_[kMaxRules];
     uint16_t staged_count_ = 0;

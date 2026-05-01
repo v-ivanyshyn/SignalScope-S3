@@ -50,6 +50,12 @@
     background: transparent;
 }
 
+.mutation-master-actions .btn,
+.mutation-row-mode-switch .btn {
+    padding-left: 0.45rem;
+    padding-right: 0.45rem;
+}
+
 .raw-byte-editor .raw-byte-input {
     text-align: center;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;

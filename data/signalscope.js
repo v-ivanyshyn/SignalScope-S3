@@ -30,6 +30,9 @@ const dom = {
     dbcUnload: document.getElementById("dbc-unload"),
 
     activeMutationList: document.getElementById("active-mutation-list"),
+    activeMutationsMasterOff: document.getElementById("active-mutations-master-off"),
+    activeMutationsMasterOn: document.getElementById("active-mutations-master-on"),
+    activeMutationsMasterOnce: document.getElementById("active-mutations-master-once"),
 
     rawEditor: document.getElementById("raw-editor"),
     rawBitGrid: document.getElementById("raw-bit-grid"),
@@ -987,39 +990,74 @@ function mutationFormParams() {
     return params;
 }
 
-async function toggleMutationEnabled(item, enabled) {
-    const params = new URLSearchParams();
-    params.set("enabled", enabled ? "true" : "false");
+function mutationModeLabel(mode) {
+    switch (mode) {
+    case "enabled":
+        return "On";
+    case "single_shot":
+        return "Once";
+    default:
+        return "Off";
+    }
+}
 
+function resolveMutationItemMode(item) {
+    if (item.mode === "enabled" || item.mode === "single_shot" || item.mode === "disabled") {
+        return item.mode;
+    }
+    return item.active ? "enabled" : "disabled";
+}
+
+async function postRuleMutationMode(item, mode) {
     if (item && item.rule_id !== undefined && item.rule_id !== null) {
-        params.set("rule_id", String(item.rule_id));
-        const direct = await postForm("/api/rules/enable", params);
+        const byId = new URLSearchParams();
+        byId.set("mode", mode);
+        byId.set("rule_id", String(item.rule_id));
+        const direct = await postForm("/api/rules/mode", byId);
         if (direct.ok) {
-            dom.replayStatus.textContent = enabled ? "Mutation enabled" : "Mutation disabled";
+            dom.replayStatus.textContent = "Mutation mode updated";
             refreshStatus();
             return true;
         }
     }
 
-    // Backward-compatible fallback by identity.
+    const params = new URLSearchParams();
+    params.set("mode", mode);
     params.set("can_id", item.can_id);
     params.set("direction", item.direction);
-    params.set("start_bit", String(item.start_bit));
-    params.set("length", String(item.length));
-    if (item.kind) {
-        params.set("kind", item.kind);
+    if (item.kind === "RAW_MASK") {
+        params.set("kind", "RAW_MASK");
+    } else {
+        params.set("start_bit", String(item.start_bit));
+        params.set("length", String(item.length));
     }
 
-    const fallback = await postForm("/api/mutations/toggle", params);
+    const fallback = await postForm("/api/mutations/mode", params);
     if (!fallback.ok) {
-        dom.replayStatus.textContent = "Mutation toggle failed";
+        dom.replayStatus.textContent = "Mutation mode update failed";
         return false;
     }
 
-    dom.replayStatus.textContent = enabled ? "Mutation enabled" : "Mutation disabled";
+    dom.replayStatus.textContent = "Mutation mode updated";
     refreshStatus();
     return true;
 }
+
+async function postAllMutationModes(mode) {
+    const params = new URLSearchParams();
+    params.set("mode", mode);
+    const response = await postForm("/api/rules/mode_all", params);
+    if (!response.ok) {
+        dom.replayStatus.textContent = "Bulk mutation mode failed";
+        return false;
+    }
+    dom.replayStatus.textContent = "All mutations mode updated";
+    refreshStatus();
+    return true;
+}
+
+const mutationMasterModeButtons = () =>
+    [dom.activeMutationsMasterOff, dom.activeMutationsMasterOn, dom.activeMutationsMasterOnce].filter(Boolean);
 
 function renderActiveMutations(items) {
     if (!dom.activeMutationList) {
@@ -1035,7 +1073,7 @@ function renderActiveMutations(items) {
 
     items.forEach((item) => {
         const row = document.createElement("div");
-        row.className = "list-group-item d-flex justify-content-between align-items-center px-0";
+        row.className = "list-group-item d-flex justify-content-between align-items-center px-0 flex-wrap gap-2";
 
         const signalName = item.signal_name ? item.signal_name : `${item.start_bit}|${item.length}`;
         const left = document.createElement("div");
@@ -1044,29 +1082,67 @@ function renderActiveMutations(items) {
             <div class="small text-muted">${escapeHtml(signalName)} ${escapeHtml(item.operation || "")}</div>
         `;
 
-        const toggleWrap = document.createElement("div");
-        toggleWrap.className = "form-check form-switch m-0";
+        const currentMode = resolveMutationItemMode(item);
+        const modeSwitch = document.createElement("div");
+        modeSwitch.className = "btn-group btn-group-sm mutation-row-mode-switch flex-shrink-0";
+        modeSwitch.setAttribute("role", "group");
+        modeSwitch.setAttribute("aria-label", "Mutation mode");
 
-        const toggle = document.createElement("input");
-        toggle.type = "checkbox";
-        toggle.className = "form-check-input";
-        toggle.checked = item.active !== undefined ? !!item.active : !!item.enabled;
-        toggle.addEventListener("change", async () => {
-            const desired = toggle.checked;
-            toggle.disabled = true;
-            const ok = await toggleMutationEnabled(item, desired);
-            if (!ok) {
-                toggle.checked = !desired;
-            }
-            toggle.disabled = false;
+        ["disabled", "enabled", "single_shot"].forEach((modeValue) => {
+            const tabButton = document.createElement("button");
+            tabButton.type = "button";
+            tabButton.dataset.mutationMode = modeValue;
+            tabButton.textContent = mutationModeLabel(modeValue);
+            const isSelected = modeValue === currentMode;
+            tabButton.className = isSelected ? "btn btn-secondary" : "btn btn-outline-secondary";
+            tabButton.setAttribute("aria-pressed", isSelected ? "true" : "false");
+
+            tabButton.addEventListener("click", async () => {
+                if (tabButton.disabled || modeValue === currentMode) {
+                    return;
+                }
+                modeSwitch.querySelectorAll("button").forEach((button) => {
+                    button.disabled = true;
+                });
+                const ok = await postRuleMutationMode(item, modeValue);
+                modeSwitch.querySelectorAll("button").forEach((button) => {
+                    button.disabled = false;
+                });
+                if (!ok) {
+                    modeSwitch.querySelectorAll("button").forEach((button) => {
+                        const buttonMode = button.dataset.mutationMode;
+                        const selected = buttonMode === currentMode;
+                        button.classList.toggle("btn-secondary", selected);
+                        button.classList.toggle("btn-outline-secondary", !selected);
+                        button.setAttribute("aria-pressed", selected ? "true" : "false");
+                    });
+                }
+            });
+
+            modeSwitch.appendChild(tabButton);
         });
 
-        toggleWrap.appendChild(toggle);
         row.appendChild(left);
-        row.appendChild(toggleWrap);
+        row.appendChild(modeSwitch);
         dom.activeMutationList.appendChild(row);
     });
 }
+
+mutationMasterModeButtons().forEach((button) => {
+    button.addEventListener("click", async () => {
+        const mode = button.dataset.mutationMode;
+        if (!mode) {
+            return;
+        }
+        mutationMasterModeButtons().forEach((masterButton) => {
+            masterButton.disabled = true;
+        });
+        await postAllMutationModes(mode);
+        mutationMasterModeButtons().forEach((masterButton) => {
+            masterButton.disabled = false;
+        });
+    });
+});
 
 async function refreshStatus() {
     try {

@@ -332,6 +332,14 @@
         <div class="card h-100">
             <div class="card-body">
                 <h4 class="header-title mb-2">Active Mutations</h4>
+                <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+                    <span class="small text-muted mb-0">All mutations</span>
+                    <div class="d-flex flex-wrap gap-1 mutation-master-actions" aria-label="Apply mode to all mutations">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="active-mutations-master-off" data-mutation-mode="disabled" title="Set all mutations to Off">Off</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="active-mutations-master-on" data-mutation-mode="enabled" title="Set all mutations to On">On</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="active-mutations-master-once" data-mutation-mode="single_shot" title="Set all mutations to Once">Once</button>
+                    </div>
+                </div>
                 <div id="active-mutation-list" class="list-group list-group-flush">
                     <div class="text-muted small">No active mutations</div>
                 </div>

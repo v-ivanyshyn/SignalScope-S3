@@ -8,6 +8,18 @@ namespace bored::signalscope {
 
 namespace {
 
+inline bool modeByteIsActive(uint8_t mode_byte) {
+    return mode_byte == static_cast<uint8_t>(MutationRuntimeMode::Enabled) ||
+        mode_byte == static_cast<uint8_t>(MutationRuntimeMode::SingleShot);
+}
+
+inline MutationRuntimeMode clampRuntimeMode(uint8_t raw) {
+    if (raw > static_cast<uint8_t>(MutationRuntimeMode::SingleShot)) {
+        return MutationRuntimeMode::Disabled;
+    }
+    return static_cast<MutationRuntimeMode>(raw);
+}
+
 uint64_t makeBitMask(uint8_t bit_length) {
     if (bit_length == 0U) {
         return 0U;
@@ -68,7 +80,7 @@ void MutationEngine::init() {
         staged_[i] = {};
         committed_shadow_[i] = {};
         runtime_state_[i].current_value.store(0U, std::memory_order_relaxed);
-        runtime_state_[i].enabled.store(0U, std::memory_order_relaxed);
+        runtime_state_[i].mode.store(static_cast<uint8_t>(MutationRuntimeMode::Disabled), std::memory_order_relaxed);
     }
 
     clearActiveTable(tables_[0]);
@@ -98,7 +110,9 @@ bool MutationEngine::stageRule(const RuleStageRequest& request, uint16_t* out_ru
     }
 
     staged_[slot].request = normalized;
-    runtime_state_[slot].enabled.store(normalized.enabled ? 1U : 0U, std::memory_order_release);
+    const MutationRuntimeMode initial_mode =
+        normalized.enabled ? MutationRuntimeMode::Enabled : MutationRuntimeMode::Disabled;
+    runtime_state_[slot].mode.store(static_cast<uint8_t>(initial_mode), std::memory_order_release);
     if (normalized.kind == RuleKind::BIT_RANGE && normalized.dynamic_value) {
         runtime_state_[slot].current_value.store(
             static_cast<uint32_t>(normalized.replace_value),
@@ -252,7 +266,7 @@ bool MutationEngine::applyCommit() {
 
     for (uint16_t i = 0; i < kMaxRules; ++i) {
         if (!staged_[i].in_use) {
-            runtime_state_[i].enabled.store(0U, std::memory_order_release);
+            runtime_state_[i].mode.store(static_cast<uint8_t>(MutationRuntimeMode::Disabled), std::memory_order_release);
         }
     }
 
@@ -284,7 +298,7 @@ bool MutationEngine::hasRulesForFrame(uint32_t can_id, Direction direction) cons
     for (uint16_t i = begin; i < end; ++i) {
         const uint16_t rule_id = table->rules[i].rule_id;
         if (rule_id < kMaxRules &&
-            runtime_state_[rule_id].enabled.load(std::memory_order_relaxed) != 0U) {
+            modeByteIsActive(runtime_state_[rule_id].mode.load(std::memory_order_relaxed))) {
             return true;
         }
     }
@@ -292,7 +306,7 @@ bool MutationEngine::hasRulesForFrame(uint32_t can_id, Direction direction) cons
     return false;
 }
 
-size_t MutationEngine::applyFrameMutations(CanFrame& frame) const {
+size_t MutationEngine::applyFrameMutations(CanFrame& frame) {
     const ActiveRuleTable* table = activeTable();
     if (table == nullptr || table->rule_count == 0U) {
         return 0U;
@@ -312,15 +326,22 @@ size_t MutationEngine::applyFrameMutations(CanFrame& frame) const {
             continue;
         }
 
-        const bool enabled = runtime_state_[rule.rule_id].enabled.load(std::memory_order_relaxed) != 0U;
-        if (!enabled) {
+        const uint8_t mode_byte = runtime_state_[rule.rule_id].mode.load(std::memory_order_relaxed);
+        if (!modeByteIsActive(mode_byte)) {
             continue;
         }
+
+        const bool consume_single_shot =
+            (mode_byte == static_cast<uint8_t>(MutationRuntimeMode::SingleShot));
 
         if (rule.source.dynamic_value && rule.source.kind == RuleKind::BIT_RANGE) {
             applyDynamicRule(rule, frame);
         } else {
             applyStaticRule(rule, frame);
+        }
+
+        if (consume_single_shot) {
+            static_cast<void>(setRuleMode(rule.rule_id, MutationRuntimeMode::Disabled));
         }
 
         ++applied;
@@ -368,30 +389,49 @@ bool MutationEngine::setRuleValue(uint16_t rule_id, uint32_t value) {
 }
 
 bool MutationEngine::enableRule(uint16_t rule_id, bool enabled) {
+    return setRuleMode(rule_id, enabled ? MutationRuntimeMode::Enabled : MutationRuntimeMode::Disabled);
+}
+
+void MutationEngine::syncStagedRequestEnabled(uint16_t rule_id, bool continuous_enabled) {
     if (rule_id >= kMaxRules) {
-        return false;
+        return;
     }
 
-    runtime_state_[rule_id].enabled.store(enabled ? 1U : 0U, std::memory_order_release);
-
     if (staged_[rule_id].in_use) {
-        staged_[rule_id].request.enabled = enabled;
+        staged_[rule_id].request.enabled = continuous_enabled;
     }
 
     for (uint16_t i = 0; i < committed_count_; ++i) {
         if (committed_shadow_[i].rule_id == rule_id) {
-            committed_shadow_[i].request.enabled = enabled;
+            committed_shadow_[i].request.enabled = continuous_enabled;
         }
     }
+}
 
+bool MutationEngine::setRuleMode(uint16_t rule_id, MutationRuntimeMode mode) {
+    if (rule_id >= kMaxRules) {
+        return false;
+    }
+
+    runtime_state_[rule_id].mode.store(static_cast<uint8_t>(mode), std::memory_order_release);
+    syncStagedRequestEnabled(rule_id, mode == MutationRuntimeMode::Enabled);
     return true;
+}
+
+void MutationEngine::setAllRulesMode(MutationRuntimeMode mode) {
+    for (uint16_t i = 0; i < committed_count_; ++i) {
+        const uint16_t rule_id = committed_shadow_[i].rule_id;
+        if (rule_id < kMaxRules) {
+            static_cast<void>(setRuleMode(rule_id, mode));
+        }
+    }
 }
 
 void MutationEngine::clearRules() {
     clearStaging();
     for (uint16_t i = 0; i < kMaxRules; ++i) {
         runtime_state_[i].current_value.store(0U, std::memory_order_relaxed);
-        runtime_state_[i].enabled.store(0U, std::memory_order_relaxed);
+        runtime_state_[i].mode.store(static_cast<uint8_t>(MutationRuntimeMode::Disabled), std::memory_order_relaxed);
     }
     committed_count_ = 0U;
     static_cast<void>(applyCommit());
@@ -414,7 +454,9 @@ size_t MutationEngine::listRules(RuleListEntry* out_entries, size_t capacity) co
         dst.rule_id = src.rule_id;
         dst.priority = src.priority;
         dst.request = src.source;
-        dst.active = runtime_state_[src.rule_id].enabled.load(std::memory_order_acquire) != 0U;
+        const uint8_t mode_byte = runtime_state_[src.rule_id].mode.load(std::memory_order_acquire);
+        dst.mode = clampRuntimeMode(mode_byte);
+        dst.active = modeByteIsActive(mode_byte);
     }
     return count;
 }
@@ -743,7 +785,7 @@ void MutationEngine::resetRuleSlot(uint16_t rule_id) {
     }
     staged_[rule_id] = {};
     runtime_state_[rule_id].current_value.store(0U, std::memory_order_relaxed);
-    runtime_state_[rule_id].enabled.store(0U, std::memory_order_relaxed);
+    runtime_state_[rule_id].mode.store(static_cast<uint8_t>(MutationRuntimeMode::Disabled), std::memory_order_relaxed);
 }
 
 }  // namespace bored::signalscope
