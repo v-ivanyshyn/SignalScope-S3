@@ -7,23 +7,21 @@ SignalScope is a deterministic inline dual-CAN gateway firmware for ESP32-S3 + M
 - Dual-bus live traffic view (`A_TO_B` + `B_TO_A`)
 - DBC load (auto-load from `/dbc` on boot + manual upload)
 - DBC decode in live view (message name + decoded signals)
-- Mutation staging/commit engine (`BIT_RANGE`, `RAW_MASK`)
+- Staged rules engine (`BIT_RANGE`, `RAW_MASK`): `/api/rules/*` (legacy `/api/mutations/*` aliases)
 - Per-rule enable/disable + dynamic value updates
+- Live Frames Changes watch (baseline of stable bytes, then diff vs live traffic)
 - Replay CSV load + play/stop/loop controls
 - Resource monitor with queue/drop/latency and ingress counters
 
 ## Important Notes
-- Live view uses a **recent-frame event ring**, not only one row per ID.
-- Mutation `mutated=true` means mutation was actually applied to that frame instance.
-- Legacy mutation operation endpoint (`/api/mutations/stage`) currently supports deterministic ops:
-  - `REPLACE`
-  - `PASS_THROUGH`
-- UI still exposes `ADD_OFFSET`, `MULTIPLY`, `CLAMP`, but those are not currently executed by `MutationEngine::stageMutation`.
+- Live view is the **latest frame per CAN ID and direction** (hash cache, many rows), not a rolling history per ID.
+- Mutation `mutated=true` means a mutation was applied to that frame instance.
+- Legacy `/api/mutations/stage` (same as `/api/rules/stage`) accepts `REPLACE` and `PASS_THROUGH` only for `SignalMutation` staging; `ADD_OFFSET`, `MULTIPLY`, `CLAMP` appear in the UI but are not staged.
 
 ## Project Layout
 - `main.cpp` firmware wiring, task runtime split, HTTP API, CAN IO
 - `core/` gateway, mutation engine, replay engine, DBC parser, frame/signal caches
-- `fs/` persistence abstraction
+- `fs/` persistence stub (RAM-only helpers; not wired to flash from `main.cpp`)
 - `data/` LittleFS payload (UI source)
 - `boards/esp32-s3-devkitc1-n16r8.json` custom 16MB board definition
 - `partitions.csv` partition layout (LittleFS label `littlefs`)
@@ -39,6 +37,7 @@ Core:
 - `GET /api/status`
 - `GET /api/frame_cache`
 - `GET /api/signal_cache`
+- `POST /api/frame_changes/watch`
 - `POST /api/observe`
 
 Rules:
@@ -47,15 +46,22 @@ Rules:
 - `GET /api/rules`
 - `POST /api/rules/enable`
 - `POST /api/rules/value`
+- `POST /api/rules/mode`
+- `POST /api/rules/mode_all`
+- `POST /api/rules/remove`
 
 Replay + DBC:
 - `POST /api/replay`
 - `POST /api/replay/load`
 - `POST /api/dbc`
+- `DELETE /api/dbc`
 
 Legacy compatibility mappings:
 - `POST /api/mutations/stage`
 - `POST /api/mutations`
+- `POST /api/mutations/mode`
+- `POST /api/mutations/mode_all`
+- `POST /api/mutations/remove`
 - `POST /api/mutations/toggle`
 
 ## DBC Auto-Load Order
@@ -99,4 +105,12 @@ platformio run -t uploadfs
 - UI missing/stale: ensure `data/index.html` exists, then `uploadfs` again.
 - Live view sparse: verify `ingress_a_frames` and `ingress_b_frames` in `/api/status` are incrementing.
 
-![Screenshot](screenshot.png)
+![Overview](Screenshot_all.jpg)
+
+![Mutations](Screenshot_mutations.jpg)
+
+![Live frames changes](Screenshot_frames_changes.jpg)
+
+![DBC and replay](Screenshot_dbc_replay.jpg)
+
+![Resource monitor](Screenshot_monitor.jpg)
