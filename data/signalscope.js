@@ -1072,7 +1072,7 @@ function renderFrames(frames) {
 }
 
 function setOffline() {
-    dom.cpuLoad.textContent = "offline";
+    if (dom.cpuLoad) dom.cpuLoad.textContent = "offline";
     dom.busA.textContent = "offline";
     dom.busB.textContent = "offline";
     dom.rxDepth.textContent = "offline";
@@ -1768,7 +1768,11 @@ async function refreshStatus() {
         }
 
         const status = await response.json();
-        dom.cpuLoad.textContent = `${status.cpu_load_pct}%`;
+        if (dom.cpuLoad) {
+            const uiPct = Number(status.cpu_core0_load_pct ?? status.cpu_load_pct ?? 0);
+            const canPct = Number(status.cpu_core1_load_pct ?? 0);
+            dom.cpuLoad.textContent = `UI & Wifi ${uiPct}% / CAN ${canPct}%`;
+        }
         dom.busA.textContent = status.bus_a_ready
             ? `RX ${status.bus_a_rx_util_pct}% / TX ${status.bus_a_tx_util_pct}% · drops: ${status.bus_a_hw_drops}`
             : "not ready";

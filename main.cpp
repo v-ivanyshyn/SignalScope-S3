@@ -16,6 +16,7 @@
 #include <cstring>
 
 #include "core/bus_stats.hpp"
+#include "core/cpu_load_monitor.hpp"
 #include "core/dbc_parser.hpp"
 #include "core/frame_cache.hpp"
 #include "core/frame_changes_watch.hpp"
@@ -64,6 +65,7 @@ SignalCache signal_cache;
 ObservationManager observation_manager;
 PersistenceStore persistence;
 BusStats bus_stats;
+CpuLoadMonitor cpu_load_monitor;
 
 DbcDatabase dbc_database;
 std::atomic<const DbcDatabase*> active_dbc{nullptr};
@@ -826,6 +828,7 @@ void canRuntimeTask(void* /*context*/) {
             last_rate_sample_ms = now_ms;
 
             bus_stats.rollWindow(now_ms);
+            cpu_load_monitor.rollSecondWindow();
 
             if (bus_a_ready.load(std::memory_order_acquire) != 0U) {
                 twai_status_info_t info{};
@@ -890,6 +893,7 @@ void setup() {
     observation_manager.init();
     persistence.begin();
     bus_stats.init(500000U);
+    cpu_load_monitor.init();
 
     gateway.setMutationEngine(&mutation_engine);
     gateway.setReplayEngine(&replay_engine);
@@ -1699,13 +1703,20 @@ void handleStatus() {
     const uint32_t bus_total_combined = static_cast<uint32_t>(bus_a_util) + static_cast<uint32_t>(bus_b_util);
     const uint16_t bus_total_util = static_cast<uint16_t>(bus_total_combined > 100U ? 100U : bus_total_combined);
 
+    const uint8_t cpu_core0_load_pct = cpu_load_monitor.loadPercentCore0();
+    const uint8_t cpu_core1_load_pct = cpu_load_monitor.loadPercentCore1();
+    const uint8_t cpu_load_pct =
+        (cpu_core0_load_pct > cpu_core1_load_pct) ? cpu_core0_load_pct : cpu_core1_load_pct;
+
     String json;
     // Sized for up to ~256 distinct CAN IDs in the snapshot, each with a
     // moderate number of decoded signals. Falls back to dynamic growth if
     // the bus actually surfaces more.
     json.reserve(60000);
     json += "{";
-    json += "\"cpu_load_pct\":5,";
+    json += "\"cpu_load_pct\":" + String(cpu_load_pct) + ",";
+    json += "\"cpu_core0_load_pct\":" + String(cpu_core0_load_pct) + ",";
+    json += "\"cpu_core1_load_pct\":" + String(cpu_core1_load_pct) + ",";
     json += "\"bus_a_util_pct\":" + String(bus_a_util) + ",";
     json += "\"bus_b_util_pct\":" + String(bus_b_util) + ",";
     json += "\"bus_total_util_pct\":" + String(bus_total_util) + ",";
