@@ -3,7 +3,9 @@
 #include <SPI.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <driver/gptimer.h>
 #include <driver/twai.h>
+#include <esp_err.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <mcp2515.h>
@@ -46,10 +48,12 @@ constexpr int kMcpMisoPin = 13;
 constexpr int kMcpRstPin = 9;
 
 // Keep CAN runtime isolated from UI/server runtime.
-constexpr BaseType_t kCanCore = 0;
-constexpr BaseType_t kUiCore = 1;
+constexpr BaseType_t kUiCore = 0;
+constexpr BaseType_t kCanCore = 1;
 constexpr uint32_t kCanTaskStackBytes = 8192;
 constexpr uint32_t kUiTaskStackBytes = 16384;
+constexpr uint32_t kCanPollTimerResolutionHz = 1'000'000;
+constexpr uint32_t kCanPollPeriodUs = 200;
 
 GatewayCore gateway;
 MutationEngine mutation_engine;
@@ -69,6 +73,9 @@ MCP2515 can_mcp(kMcpCsPin, 10000000, &SPI);
 
 TaskHandle_t can_task_handle = nullptr;
 TaskHandle_t ui_task_handle = nullptr;
+
+gptimer_handle_t can_poll_timer = nullptr;
+std::atomic<uint8_t> can_poll_gptimer_armed{0};
 
 std::atomic<uint8_t> bus_a_ready{0};
 std::atomic<uint8_t> bus_b_ready{0};
@@ -719,6 +726,76 @@ void startAccessPoint() {
     Serial.printf("[wifi] AP started: SSID=%s PASS=%s IP=%s\n", kApSsid, kApPassword, ap_ip.toString().c_str());
 }
 
+bool canPollGptimerOnAlarm(gptimer_handle_t /*timer*/, const gptimer_alarm_event_data_t* /*edata*/, void* /*user_ctx*/) {
+    BaseType_t higher_priority_task_woken = pdFALSE;
+    if (can_task_handle != nullptr) {
+        vTaskNotifyGiveFromISR(can_task_handle, &higher_priority_task_woken);
+    }
+    return higher_priority_task_woken != pdFALSE;
+}
+
+bool initCanPollGptimer() {
+    if (can_poll_timer != nullptr) {
+        return true;
+    }
+    gptimer_config_t timer_config = {};
+    timer_config.clk_src = GPTIMER_CLK_SRC_DEFAULT;
+    timer_config.direction = GPTIMER_COUNT_UP;
+    timer_config.resolution_hz = kCanPollTimerResolutionHz;
+    timer_config.intr_priority = 0;
+    timer_config.flags.intr_shared = false;
+
+    esp_err_t err = gptimer_new_timer(&timer_config, &can_poll_timer);
+    if (err != ESP_OK) {
+        Serial.printf("[can] gptimer_new_timer failed: %s\n", esp_err_to_name(err));
+        can_poll_timer = nullptr;
+        return false;
+    }
+
+    gptimer_event_callbacks_t callbacks = {};
+    callbacks.on_alarm = canPollGptimerOnAlarm;
+    err = gptimer_register_event_callbacks(can_poll_timer, &callbacks, nullptr);
+    if (err != ESP_OK) {
+        Serial.printf("[can] gptimer_register_event_callbacks failed: %s\n", esp_err_to_name(err));
+        gptimer_del_timer(can_poll_timer);
+        can_poll_timer = nullptr;
+        return false;
+    }
+
+    gptimer_alarm_config_t alarm_config = {};
+    alarm_config.alarm_count = kCanPollPeriodUs;
+    alarm_config.reload_count = 0;
+    alarm_config.flags.auto_reload_on_alarm = true;
+
+    err = gptimer_set_alarm_action(can_poll_timer, &alarm_config);
+    if (err != ESP_OK) {
+        Serial.printf("[can] gptimer_set_alarm_action failed: %s\n", esp_err_to_name(err));
+        gptimer_del_timer(can_poll_timer);
+        can_poll_timer = nullptr;
+        return false;
+    }
+
+    err = gptimer_enable(can_poll_timer);
+    if (err != ESP_OK) {
+        Serial.printf("[can] gptimer_enable failed: %s\n", esp_err_to_name(err));
+        gptimer_del_timer(can_poll_timer);
+        can_poll_timer = nullptr;
+        return false;
+    }
+
+    err = gptimer_start(can_poll_timer);
+    if (err != ESP_OK) {
+        Serial.printf("[can] gptimer_start failed: %s\n", esp_err_to_name(err));
+        gptimer_disable(can_poll_timer);
+        gptimer_del_timer(can_poll_timer);
+        can_poll_timer = nullptr;
+        return false;
+    }
+
+    Serial.printf("[can] GPTimer CAN poll %lu us started\n", static_cast<unsigned long>(kCanPollPeriodUs));
+    return true;
+}
+
 void canRuntimeTask(void* /*context*/) {
     uint32_t last_rate_sample_ms = millis();
     uint32_t last_stats_log_ms = millis();
@@ -726,6 +803,17 @@ void canRuntimeTask(void* /*context*/) {
     gateway.setReadyGate(true);
 
     for (;;) {
+        // Wait for CAN poll timer to trigger task notification if the GPTimer is armed,
+        // otherwise sleep for 1ms. This mechanism is used to efficiently poll CAN ingress,
+        // minimizing CPU usage when not actively notified by the timer.
+        if (can_poll_gptimer_armed.load(std::memory_order_acquire) != 0U) {
+            (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+            while (ulTaskNotifyTake(pdFALSE, 0) > 0U) {
+            }
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(1));
+        }
+
         const uint32_t now_us = micros();
         const uint32_t now_ms = millis();
 
@@ -777,8 +865,6 @@ void canRuntimeTask(void* /*context*/) {
                 static_cast<unsigned int>(mutation_engine.activeCount()));
             last_stats_log_ms = now_ms;
         }
-
-        vTaskDelay(pdMS_TO_TICKS(1));
     }
 }
 
@@ -840,6 +926,13 @@ void setup() {
         3,
         &can_task_handle,
         kCanCore);
+    if (can_ok == pdPASS) {
+        if (initCanPollGptimer()) {
+            can_poll_gptimer_armed.store(1U, std::memory_order_release);
+        } else {
+            Serial.println("[can] GPTimer init failed; CAN loop falls back to vTaskDelay(1)");
+        }
+    }
     const BaseType_t ui_ok = xTaskCreatePinnedToCore(
         uiRuntimeTask,
         "ss_ui",
